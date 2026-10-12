@@ -13,7 +13,6 @@ never in diagnostics, non-SELECT refused before the wire.
 from __future__ import annotations
 
 import json
-import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -24,103 +23,6 @@ from qc.domain.models import DatasetRef, SourceConfig
 
 # (connector, config, qualified_dataset)
 Triple = tuple[DataConnector, SourceConfig, str]
-
-
-async def _seed_postgres() -> Triple:
-    from qc.connectors.postgres import PostgresConnector
-
-    config = SourceConfig(
-        name="pg-contract",
-        connector="postgres",
-        connection_ref="env:QC_TEST_POSTGRES_DSN",
-    )
-    # Seed through a *separate* raw connection: the connector itself
-    # opens read-only sessions (SPEC 6.2), so it must not be the seeder.
-    import psycopg
-
-    dsn = os.environ["QC_TEST_POSTGRES_DSN"]
-    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as seed:
-        await seed.execute("DROP TABLE IF EXISTS qc_contract")
-        await seed.execute(
-            """CREATE TABLE qc_contract (
-                id integer PRIMARY KEY,
-                label text NOT NULL,
-                amount numeric(10,2),
-                flag boolean,
-                "when" date,
-                note text,
-                big_id bigint
-            )"""
-        )
-        rows = [
-            (
-                i,
-                f"row-{i}",
-                f"{i}.25",
-                i % 2 == 0,
-                f"2025-01-{(i % 28) + 1:02d}",
-                "" if i % 3 == 0 else None,
-                9007199254740993 + i,
-            )
-            for i in range(10)
-        ]
-        await seed.execute(
-            "INSERT INTO qc_contract VALUES " + ",".join("(%s,%s,%s,%s,%s,%s,%s)" for _ in rows),
-            [v for row in rows for v in row],
-        )
-    conn = PostgresConnector()
-    return conn, config, "public.qc_contract"  # type: ignore[return-value]
-
-
-async def _seed_mysql() -> Triple:
-    from qc.connectors.mysql import MySQLConnector, _parse_mysql_dsn
-
-    dsn = os.environ["QC_TEST_MYSQL_DSN"]
-    schema = dsn.rsplit("/", 1)[-1].split("?")[0]
-    config = SourceConfig(
-        name="my-contract",
-        connector="mysql",
-        connection_ref="env:QC_TEST_MYSQL_DSN",
-        default_schema=schema,
-    )
-    # Seed through a separate raw connection: the connector enforces a
-    # read-only session (SPEC 6.3), so it must not be the seeder.
-    import mysql.connector
-
-    seed = mysql.connector.connect(**_parse_mysql_dsn(dsn))
-    try:
-        cur = seed.cursor()
-        cur.execute("DROP TABLE IF EXISTS qc_contract")
-        cur.execute(
-            """CREATE TABLE qc_contract (
-                id int PRIMARY KEY,
-                label varchar(64) NOT NULL,
-                amount decimal(10,2),
-                flag tinyint(1),
-                `when` date,
-                note text,
-                big_id bigint
-            )"""
-        )
-        for i in range(10):
-            cur.execute(
-                "INSERT INTO qc_contract VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (
-                    i,
-                    f"row-{i}",
-                    f"{i}.25",
-                    i % 2 == 0,
-                    f"2025-01-{(i % 28) + 1:02d}",
-                    "" if i % 3 == 0 else None,
-                    9007199254740993 + i,
-                ),
-            )
-        seed.commit()
-        cur.close()
-    finally:
-        seed.close()
-    conn = MySQLConnector()
-    return conn, config, f"{schema}.qc_contract"  # type: ignore[return-value]
 
 
 @pytest.fixture
@@ -150,30 +52,6 @@ async def fixture_triple(tmp_path: Path) -> AsyncIterator[Triple]:
     conn = FixtureConnector(tmp_path)
     yield conn, config, "contract.jsonl"
     await conn.close()
-
-
-@pytest.fixture
-async def postgres_triple() -> AsyncIterator[Triple]:
-    if not os.environ.get("QC_TEST_POSTGRES_DSN"):
-        pytest.skip("QC_TEST_POSTGRES_DSN not set; live test skipped")
-    try:
-        triple = await _seed_postgres()
-    except ImportError as exc:
-        pytest.skip(str(exc))
-    yield triple
-    await triple[0].close()
-
-
-@pytest.fixture
-async def mysql_triple() -> AsyncIterator[Triple]:
-    if not os.environ.get("QC_TEST_MYSQL_DSN"):
-        pytest.skip("QC_TEST_MYSQL_DSN not set; live test skipped")
-    try:
-        triple = await _seed_mysql()
-    except ImportError as exc:
-        pytest.skip(str(exc))
-    yield triple
-    await triple[0].close()
 
 
 def _ref(config: SourceConfig, dataset: str) -> DatasetRef:

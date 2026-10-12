@@ -19,28 +19,6 @@ from qc.domain.models import SourceConfig
 pytestmark = pytest.mark.integration
 
 
-def _policy_engine():
-    from qc.config.policies import parse_policy
-    from qc.security.policy import Ceiling, PolicyEngine
-
-    text = """
-name: dest
-export_allowed: true
-allowed_destinations: [pg_dest, my_dest]
-write_allowed: true
-defaults:
-  source_writes: allow
-sources:
-  pg_dest:
-    access: read
-    datasets: [public.export_probe]
-  my_dest:
-    access: read
-    datasets: [qcdb.export_probe]
-"""
-    return PolicyEngine(parse_policy(text), Ceiling(source_writes=True))
-
-
 @pytest.fixture
 def sample_file(tmp_path: Path) -> Path:
     out = tmp_path / "synth.jsonl"
@@ -236,6 +214,12 @@ async def _pg_drop(table: str) -> None:
         await c.execute(f"DROP TABLE IF EXISTS {table}")
 
 
+def _mysql_schema() -> str:
+    """Schema comes from the DSN; a hardcoded name breaks CI (SPEC 16.3)."""
+    dsn = os.environ["QC_TEST_MYSQL_DSN"]
+    return dsn.rsplit("/", 1)[-1].split("?")[0]
+
+
 class TestMySQLDestination:
     @pytest.fixture
     def dest_config(self) -> SourceConfig:
@@ -243,7 +227,7 @@ class TestMySQLDestination:
             name="my_dest",
             connector="mysql",
             connection_ref="env:QC_TEST_MYSQL_DSN",
-            default_schema="qcdb",
+            default_schema=_mysql_schema(),
         )
 
     async def test_create_and_select(self, dest_config) -> None:
@@ -253,24 +237,24 @@ class TestMySQLDestination:
         from qc.exports.db_writer import MySQLDestination
         from qc.security.secrets import resolve_secret
 
+        schema = _mysql_schema()
+        table = f"{schema}.export_probe"
         rows = [{"id": i, "label": f"r{i}", "flag": bool(i % 2)} for i in range(4)]
         w = MySQLDestination()
         try:
-            n = await w.write_rows(
-                dest_config, "qcdb.export_probe", ["id", "label", "flag"], rows, mode="create"
-            )
+            n = await w.write_rows(dest_config, table, ["id", "label", "flag"], rows, mode="create")
             assert n == 4
         finally:
             await w.close()
-        # verify via raw connection
+        # verify via raw connection, fully qualified
         import mysql.connector
 
         conn = mysql.connector.connect(**_parse_mysql_dsn(resolve_secret("env:QC_TEST_MYSQL_DSN")))
         try:
             cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM export_probe")
+            cur.execute(f"SELECT COUNT(*) FROM {table}")
             assert cur.fetchone()[0] == 4
-            cur.execute("DROP TABLE export_probe")
+            cur.execute(f"DROP TABLE {table}")
             conn.commit()
             cur.close()
         finally:

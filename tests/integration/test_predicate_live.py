@@ -2,42 +2,34 @@
 
 Verifies the ``--where`` typed predicate actually filters aggregates and
 samples, and that no raw SQL can leak through the predicate path.
+
+Seeding comes from the shared ``postgres_triple`` / ``mysql_triple``
+fixtures in ``tests/conftest.py`` — test modules never import each other.
 """
 
 from __future__ import annotations
 
-import os
+from typing import TYPE_CHECKING
 
 import pytest
 
 from qc.connectors.base import ProfileQuery, SampleRequest
 from qc.domain.models import DatasetRef
 
+if TYPE_CHECKING:
+    from qc.domain.models import SourceConfig
+
 pytestmark = pytest.mark.integration
 
 
-@pytest.fixture
-async def seeded(request: pytest.FixtureRequest):  # type: ignore[no-untyped-def]
-    """Seed the contract table via the shared helpers, then yield it."""
-    backend = request.param
-    dsn_env = "QC_TEST_POSTGRES_DSN" if backend == "postgres" else "QC_TEST_MYSQL_DSN"
-    if not os.environ.get(dsn_env):
-        pytest.skip(f"{dsn_env} not set")
-    from tests.contract.test_connector_contract import _seed_mysql, _seed_postgres
-
-    builder = _seed_postgres if backend == "postgres" else _seed_mysql
-    try:
-        connector, config, dataset = await builder()
-    except ImportError as exc:
-        pytest.skip(str(exc))
+def _ref_from(config: SourceConfig, dataset: str) -> DatasetRef:
     ns, _, name = dataset.rpartition(".")
-    ref = DatasetRef(source_id=config.id, namespace=ns or None, name=name, locator=dataset)
-    yield connector, config, ref
-    await connector.close()
+    return DatasetRef(source_id=config.id, namespace=ns or None, name=name, locator=dataset)
 
 
-@pytest.mark.parametrize("seeded", ["postgres", "mysql"], indirect=True)
-class TestLivePredicate:
+class LivePredicateCases:
+    """Contract assertions applied to whichever live backend is bound."""
+
     async def test_row_count_filtered(self, seeded) -> None:  # type: ignore[no-untyped-def]
         connector, config, ref = seeded
         # qc_contract has ids 0..9; filter id < 5 -> 5 rows
@@ -103,3 +95,21 @@ class TestLivePredicate:
                 config,
                 ProfileQuery(kind="row_count", dataset=ref, params={"predicate": predicate}),
             )
+
+
+class TestPostgresPredicate(LivePredicateCases):
+    """Live predicate behavior on PostgreSQL."""
+
+    @pytest.fixture
+    async def seeded(self, postgres_triple):  # type: ignore[no-untyped-def]
+        connector, config, dataset = postgres_triple
+        yield connector, config, _ref_from(config, dataset)
+
+
+class TestMySQLPredicate(LivePredicateCases):
+    """Live predicate behavior on MySQL."""
+
+    @pytest.fixture
+    async def seeded(self, mysql_triple):  # type: ignore[no-untyped-def]
+        connector, config, dataset = mysql_triple
+        yield connector, config, _ref_from(config, dataset)

@@ -1,9 +1,154 @@
-"""Shared profiling test fixtures: edge-case JSONL dataset (SPEC 16.1)."""
+"""Shared test fixtures: edge-case datasets (SPEC 16.1) and live
+database seeding.
+
+Live seeds live here so any test module can use them as fixtures —
+test modules never import each other (``tests`` is not an importable
+package in CI).
+"""
 
 import json
+import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from qc.connectors.base import DataConnector
+    from qc.domain.models import SourceConfig
+
+#: (connector, config, qualified dataset name)
+Triple = tuple["DataConnector", "SourceConfig", str]
+
+# --------------------------------------------------------- live DB seeding
+
+
+async def _seed_postgres() -> Triple:
+    """Seed the contract table through a *separate* raw connection.
+
+    The connector opens read-only sessions (SPEC 6.2), so it must never
+    be the seeder.
+    """
+    import psycopg
+
+    from qc.connectors.postgres import PostgresConnector
+    from qc.domain.models import SourceConfig
+
+    config = SourceConfig(
+        name="pg-contract",
+        connector="postgres",
+        connection_ref="env:QC_TEST_POSTGRES_DSN",
+    )
+    dsn = os.environ["QC_TEST_POSTGRES_DSN"]
+    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as seed:
+        await seed.execute("DROP TABLE IF EXISTS qc_contract")
+        await seed.execute(
+            """CREATE TABLE qc_contract (
+                id integer PRIMARY KEY,
+                label text NOT NULL,
+                amount numeric(10,2),
+                flag boolean,
+                "when" date,
+                note text,
+                big_id bigint
+            )"""
+        )
+        rows = [
+            (
+                i,
+                f"row-{i}",
+                f"{i}.25",
+                i % 2 == 0,
+                f"2025-01-{(i % 28) + 1:02d}",
+                "" if i % 3 == 0 else None,
+                9007199254740993 + i,
+            )
+            for i in range(10)
+        ]
+        await seed.execute(
+            "INSERT INTO qc_contract VALUES " + ",".join("(%s,%s,%s,%s,%s,%s,%s)" for _ in rows),
+            [v for row in rows for v in row],
+        )
+    return PostgresConnector(), config, "public.qc_contract"  # type: ignore[return-value]
+
+
+async def _seed_mysql() -> Triple:
+    """Seed the contract table; schema is derived from the DSN.
+
+    Hardcoding a schema name breaks CI, whose database differs from a
+    local one (SPEC 16.3 connector contract).
+    """
+    import mysql.connector
+
+    from qc.connectors.mysql import MySQLConnector, _parse_mysql_dsn
+    from qc.domain.models import SourceConfig
+    from qc.security.secrets import resolve_secret
+
+    dsn = os.environ["QC_TEST_MYSQL_DSN"]
+    schema = dsn.rsplit("/", 1)[-1].split("?")[0]
+    config = SourceConfig(
+        name="my-contract",
+        connector="mysql",
+        connection_ref="env:QC_TEST_MYSQL_DSN",
+        default_schema=schema,
+    )
+    seed = mysql.connector.connect(**_parse_mysql_dsn(resolve_secret("env:QC_TEST_MYSQL_DSN")))
+    try:
+        cur = seed.cursor()
+        cur.execute("DROP TABLE IF EXISTS qc_contract")
+        cur.execute(
+            """CREATE TABLE qc_contract (
+                id int PRIMARY KEY,
+                label varchar(64) NOT NULL,
+                amount decimal(10,2),
+                flag tinyint(1),
+                `when` date,
+                note text,
+                big_id bigint
+            )"""
+        )
+        for i in range(10):
+            cur.execute(
+                "INSERT INTO qc_contract VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    i,
+                    f"row-{i}",
+                    f"{i}.25",
+                    i % 2 == 0,
+                    f"2025-01-{(i % 28) + 1:02d}",
+                    "" if i % 3 == 0 else None,
+                    9007199254740993 + i,
+                ),
+            )
+        seed.commit()
+        cur.close()
+    finally:
+        seed.close()
+    return MySQLConnector(), config, f"{schema}.qc_contract"  # type: ignore[return-value]
+
+
+@pytest.fixture
+async def postgres_triple() -> Triple:
+    if not os.environ.get("QC_TEST_POSTGRES_DSN"):
+        pytest.skip("QC_TEST_POSTGRES_DSN not set; live test skipped")
+    try:
+        triple = await _seed_postgres()
+    except ImportError as exc:
+        pytest.skip(str(exc))
+    yield triple
+    await triple[0].close()
+
+
+@pytest.fixture
+async def mysql_triple() -> Triple:
+    if not os.environ.get("QC_TEST_MYSQL_DSN"):
+        pytest.skip("QC_TEST_MYSQL_DSN not set; live test skipped")
+    try:
+        triple = await _seed_mysql()
+    except ImportError as exc:
+        pytest.skip(str(exc))
+    yield triple
+    await triple[0].close()
 
 
 @pytest.fixture
