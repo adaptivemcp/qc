@@ -166,6 +166,14 @@ def source_add(
     dataset: Annotated[
         list[str], typer.Option("--dataset", help="Allowed dataset (repeatable)")
     ] = [],
+    option: Annotated[
+        list[str],
+        typer.Option(
+            "--option",
+            help="Connector option key=value (e.g. spreadsheet_id=1AbC, "
+            "header_row=1, endpoint=...)",
+        ),
+    ] = [],
     json_output: JsonOpt = False,
     quiet: QuietOpt = False,
     verbose: VerboseOpt = False,
@@ -175,12 +183,21 @@ def source_add(
 
     opts = _opts(json_output, quiet, verbose, "text")
     rt = _runtime(root, config)
+    options: dict[str, str] = {}
+    for item in option:
+        if "=" not in item:
+            raise InvalidArgumentsError(f"--option must be key=value, got: {item[:64]}")
+        key, _, value = item.partition("=")
+        if not key or any(c in key for c in " \t\n"):
+            raise InvalidArgumentsError(f"invalid option key: {key[:64]}")
+        options[key.strip()] = value
     cfg = SourceConfig(
         name=name,
         connector=type,
         connection_ref=connection_ref,
         default_schema=default_schema,
         allowed_datasets=list(dataset),
+        options=options,
     )
     rt.sources.add(cfg)
     emit(cfg, opts=opts, text=f"Added source '{name}' ({type})")
@@ -430,11 +447,37 @@ def profile_run(
         finally:
             await connector.close()
 
-    result = arun(_run())
+    # record job lifecycle (SPEC 15) — metadata only, no raw rows
+    from qc.domain.enums import JobStatus, utc_now
+    from qc.domain.models import JobRecord
+
+    job = JobRecord(kind="profile", source_id=cfg.id, dataset_id=dataset)
+    rt.state.upsert_job(job)
+    job.status = JobStatus.RUNNING
+    job.updated_at = utc_now()
+    job.message = "profiling"
+    rt.state.upsert_job(job)
+    try:
+        result = arun(_run())
+    except Exception as exc:
+        from qc.security.redaction import safe_error_message
+
+        job.status = JobStatus.FAILED
+        job.updated_at = utc_now()
+        job.message = safe_error_message(exc)[:200]
+        job.error_code = getattr(getattr(exc, "code", None), "value", None)
+        rt.state.upsert_job(job)
+        raise
     artifact = result.artifact
     out_path = Path(profile_output) if profile_output else rt.paths.profiles
     saved = save_profile(out_path, artifact)
     rt.state.index_profile(artifact, saved)
+    job.status = JobStatus.COMPLETED
+    job.updated_at = utc_now()
+    job.progress = 1.0
+    job.message = f"profile {artifact.profile_id}"
+    job.result_ref = str(saved)
+    rt.state.upsert_job(job)
     rt.audit.record(
         OperationKind.PROFILE,
         source_id=cfg.id,
@@ -843,6 +886,13 @@ def generate_plan(
     locale: str = typer.Option("en_US", "--locale"),
     output: Path | None = typer.Option(None, "--output"),
     policy: str | None = typer.Option(None, "--policy"),
+    strategy: Annotated[
+        list[str],
+        typer.Option(
+            "--strategy",
+            help="Column strategy override column=strategy (repeatable), e.g. email=format_email",
+        ),
+    ] = [],
     root: RootOpt = None,
     config: ConfigOpt = None,
     json_output: JsonOpt = False,
@@ -854,6 +904,12 @@ def generate_plan(
 
     opts = _opts(json_output, quiet, verbose, "text")
     rt = _runtime(root, config)
+    overrides: dict[str, str] = {}
+    for item in strategy:
+        if "=" not in item:
+            raise InvalidArgumentsError(f"--strategy must be column=strategy, got: {item[:64]}")
+        col, _, strat = item.partition("=")
+        overrides[col.strip()] = strat.strip()
     plan = create_plan(
         rt,
         profile_ref=profile_id,
@@ -862,6 +918,7 @@ def generate_plan(
         locale=locale,
         policy_name=policy,
         output=output,
+        strategy_overrides=overrides,
     )
     emit(
         plan,

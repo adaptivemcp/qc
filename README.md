@@ -1,45 +1,134 @@
 # QueryCleaner/QC
 
-**Working name — rename before public release.**
+**Working name — rename before public release** (ADR-001).
 
 Local-first data profiling, sanitization, and synthetic data generation
-with a consistent CLI (`qc`) and MCP server interface.
+with a consistent **CLI (`qc`)** and **MCP server** interface. QC learns
+data behavior through bounded, inspectable evidence, enforces privacy
+policy *before* disclosure, generates data with explicit constraints,
+validates the result, and makes every important decision traceable.
 
-> **Status:** active development against [`SPEC.md`](SPEC.md).
+> Status: implementation against [`SPEC.md`](SPEC.md). See
+> [SECURITY.md](SECURITY.md) for the threat model and data-handling
+> guarantees.
 
 ## What it does
 
-- Connect to PostgreSQL, MySQL, Alibaba MaxCompute (via JVM JDBC sidecar),
-  Google Sheets, and Lark Sheets.
-- Learn schema and data behavior through **bounded, adaptive profiling** —
-  every query is budgeted (rows, bytes, queries, time, cost).
-- Detect likely sensitive fields and enforce **explicit policy before any
-  data leaves the source boundary**.
-- Sanitize (mask / redact / generalize / tokenize) or generate synthetic
-  data with Faker, inferred formats, distributions, and constraints.
-- Validate generated data against learned profiles and report deviations.
-- Export JSONL, CSV, or to an approved destination database.
-- Expose narrow, policy-aware tools to AI clients over MCP (stdio or
-  Streamable HTTP).
-
-## Security defaults
-
-- Read-only source access; no source mutation.
-- **Deny by default**: raw rows, external egress, writes, and model calls
-  are all denied unless a policy explicitly allows them.
-- No credentials in config or artifacts — secret *references* only
-  (`env:`, `file:`, `keyring:`, `cmd:`).
-- No raw values in logs, reports, or profile artifacts.
+- **Connect** to PostgreSQL, MySQL, Alibaba MaxCompute (via JVM JDBC
+  sidecar), Google Sheets, and Lark Sheets — read-only by default.
+- **Discover** schemas, constraints, keys, and spreadsheet structure.
+- **Profile** adaptively under row/byte/query/time budgets: logical types
+  (ambiguity retained), null/falsy variants kept distinct, distributions,
+  formats, relationships, sensitivity detection, evidence + confidence.
+- **Sanitize** with per-column actions: `keep`, `mask`, `redact`,
+  `generalize`, `tokenize` (keyed HMAC), `synthetic`, `drop`,
+  `manual_review` — deny-by-default.
+- **Generate** synthetic data with seeded reproducibility and validated
+  fidelity (hard constraints vs soft tolerances reported separately).
+- **Export** JSONL/CSV (null encoding + formula-injection protection) or
+  an approved destination database, with provenance manifests.
+- **Serve** AI clients over MCP (stdio or authenticated Streamable HTTP)
+  with 11 narrow, bounded, policy-enforced tools.
 
 ## Quickstart
 
 ```bash
-uv sync
-uv run qc init
-uv run qc doctor
+uv sync                      # or: pip install -e .
+qc init                      # qc.toml, strict policy, directories
+qc doctor                    # environment + connector diagnostics
+
+qc source add analytics --type postgres \
+  --connection-ref env:PG_DSN --schema public
+qc source test analytics
+qc policy grant strict-local analytics --dataset public.orders   # explicit grant
+qc dataset list analytics
+
+qc profile run analytics public.orders --max-queries 40 --sample-size 2000
+qc profile show <profile-id>
+
+qc sanitize preview analytics public.orders --policy strict-local --limit 10
+qc sanitize export  analytics public.orders --policy strict-local \
+  --output output/safe.jsonl
+
+qc generate plan <profile-id> --rows 1000 --seed 42
+qc generate run reports/plan_*.plan.json --output output/synth.jsonl
+qc generate validate output/synth.jsonl --profile <profile-id>
 ```
 
-Full usage: see [`SPEC.md`](SPEC.md) and `docs/`.
+Fixture (JSONL/CSV) sources let you try everything without a database:
+
+```bash
+qc source add demo --type fixture --connection-ref env:QC_FIXTURE_ROOT \
+  --dataset people.jsonl
+```
+
+## MCP
+
+```bash
+qc mcp                                   # stdio (local AI clients)
+qc mcp --transport http                  # requires auth config (see docs/mcp.md)
+```
+
+Tools: `list_sources`, `list_datasets`, `get_dataset_schema`,
+`profile_dataset`, `get_profile`, `preview_sanitized_data`,
+`generate_synthetic_data`, `validate_synthetic_data`, `get_job_status`,
+`cancel_job`, `get_policy_summary`.
+
+**Not exposed in v1:** arbitrary SQL/Python, policy mutation, source
+writes, credential management, raw-row dumps.
+
+## Security defaults
+
+- Read-only source access; no source mutation.
+- **Deny by default:** raw rows, external egress, writes, model calls,
+  and exports are denied until a policy explicitly allows them.
+- No credentials in config or artifacts — secret *references* only
+  (`env:`, `file:` chmod-600, `keyring:`, `cmd:`).
+- No raw values in logs, errors, reports, or profile artifacts.
+- Budgets are ceilings: tool arguments can only narrow them.
+- Full model: [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+| Doc | Contents |
+|---|---|
+| [SPEC.md](SPEC.md) | full specification |
+| [SECURITY.md](SECURITY.md) | threat model, data handling, reporting |
+| [docs/connectors.md](docs/connectors.md) | permissions + config per source |
+| [docs/profiling.md](docs/profiling.md) | algorithms, sampling limits, confidence |
+| [docs/policies.md](docs/policies.md) | policy schema, semantics, actions |
+| [docs/synthetic-data.md](docs/synthetic-data.md) | strategies, fidelity, privacy limits |
+| [docs/mcp.md](docs/mcp.md) | transports, tools, auth, client setup |
+| [docs/operations.md](docs/operations.md) | deploy, log, upgrade, retain |
+| [docs/adr/](docs/adr/) | architecture decision records |
+
+## Development
+
+```bash
+uv sync
+uv run ruff check src tests && uv run ruff format src tests
+uv run mypy
+uv run pytest tests/unit tests/property tests/security -q      # fast
+uv run pytest tests -q -m "not integration"                    # full non-live
+# live connector contract tests (docker):
+export QC_TEST_POSTGRES_DSN='postgresql://…'
+export QC_TEST_MYSQL_DSN='mysql://…'
+uv run pytest tests/contract -m integration
+```
+
+Exit codes are stable (SPEC 11.3): `0` ok, `2` bad arguments, `4` policy
+denied, `5` budget/cancelled, `6` source error, `7` validation failure,
+`9` destination write failure.
+
+## Known limitations (v1)
+
+- Synthetic data is **not anonymous** and not differentially private
+  (ADR-005); reports say so explicitly.
+- Relational generation across multiple datasets is declarative, not yet
+  scheduled (see docs/synthetic-data.md).
+- MaxCompute requires a pinned JDBC driver + Java 17+; live driver/dialect
+  verification is a release gate (ADR-006).
+- HTTP bearer auth is a stopgap in front of an OIDC gateway (ADR-003).
 
 ## License
 

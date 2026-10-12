@@ -385,7 +385,26 @@ class TestGlobalFlags:
 
 
 class TestJobRegistry:
-    def test_job_list_empty(self, project: Path) -> None:
+    def test_profile_run_records_job(self, project: Path) -> None:
+        run_qc(project, "policy", "grant", "strict-local", "demo", "--dataset", "people.jsonl")
+        run_qc(project, "profile", "run", "demo", "people.jsonl")
+        out = run_qc(project, "job", "list", "--json")
+        jobs = json.loads(out.stdout)
+        assert jobs, "profile run must record a job"
+        profile_jobs = [j for j in jobs if j["kind"] == "profile"]
+        assert profile_jobs
+        assert profile_jobs[0]["status"] == "completed"
+        # job show works and leaks nothing
+        show = run_qc(project, "job", "show", profile_jobs[0]["id"], "--json")
+        payload = json.loads(show.stdout)
+        assert payload["status"] == "completed"
+        assert "alice@example.com" not in show.stdout
+
+    def test_job_show_missing_exit_1(self, project: Path) -> None:
+        proc = run_qc(project, "job", "show", "job_nonexistent", expect=1)
+        assert "not found" in proc.stderr.lower()
+
+    def test_job_list_empty_before_runs(self, project: Path) -> None:
         out = run_qc(project, "job", "list")
         assert "no jobs" in out.stdout
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from qc.artifacts.profiles import find_profile, load_profile
 from qc.domain.enums import OperationKind
 from qc.domain.errors import GenerationError, NotFoundError, ValidationError
-from qc.domain.models import GenerationPlan, GenerationReport
+from qc.domain.models import GenerationPlan, GenerationReport, StrategyOverride
 from qc.generation.strategies import GenerationContext, execute, resolve_strategy
 from qc.generation.validation import validate_generation
 from qc.security.policy import DecisionContext, Operation
@@ -30,8 +30,13 @@ def create_plan(
     policy_name: str | None = None,
     output: Path | None = None,
     allow_fallbacks: bool = False,
+    strategy_overrides: dict[str, str] | None = None,
 ) -> GenerationPlan:
-    """Build a GenerationPlan from a saved profile after policy checks."""
+    """Build a GenerationPlan from a saved profile after policy checks.
+
+    ``strategy_overrides`` maps column -> strategy name (SPEC 9.1 step 1:
+    explicit user-defined strategies win over the registry).
+    """
     engine = rt.engine(policy_name)
     path = rt.state.find_profile_index(profile_ref) or find_profile(rt.paths.profiles, profile_ref)
     artifact = load_profile(path)
@@ -49,6 +54,17 @@ def create_plan(
         raise ValidationError(
             f"requested {rows} rows exceeds ceiling {rt.ceiling.max_rows}",
         )
+    known_columns = {c.name for c in artifact.columns}
+    overrides = [
+        StrategyOverride(column=col, strategy=strat)
+        for col, strat in (strategy_overrides or {}).items()
+    ]
+    for ov in overrides:
+        if ov.column not in known_columns:
+            raise ValidationError(
+                f"strategy override names unknown column '{ov.column}'",
+                detail={"column": ov.column},
+            )
     plan = GenerationPlan(
         profile_ids=[artifact.profile_id],
         dataset=artifact.dataset,
@@ -57,6 +73,7 @@ def create_plan(
         locale=locale,
         output_format=(output.suffix.lstrip(".") if output else "jsonl"),
         allow_fallbacks=allow_fallbacks,
+        strategy_overrides=overrides,
         budget=artifact.budget,
     )
     plan_path = rt.paths.reports / f"{plan.plan_id}.plan.json"
