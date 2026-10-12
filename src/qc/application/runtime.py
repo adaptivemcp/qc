@@ -33,6 +33,10 @@ class Runtime:
         config: AppConfig | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve() if root else Path.cwd()
+        if config is None and config_path is None:
+            # explicit root: prefer its own qc.toml over process cwd
+            root_config = self.root / "qc.toml"
+            config_path = root_config if root_config.is_file() else None
         self.config = config or load_config(config_path)
         self.paths = Paths.for_root(self.root).ensure()
         self.sources = SourceRegistry(self.paths.sources_file)

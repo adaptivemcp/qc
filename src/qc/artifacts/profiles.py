@@ -18,12 +18,17 @@ from qc.domain.models import SCHEMA_VERSION_PROFILE, ProfileArtifact
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 
+def _safe_id(value: str) -> bool:
+    """Valid artifact id: safe charset AND not dot-only (blocks '..', '.')."""
+    return bool(SAFE_ID_RE.match(value)) and value.strip(".") != ""
+
+
 def artifact_path(profile_dir: Path, profile_id: str, fingerprint: str | None = None) -> Path:
     """``profiles/<fingerprint-or-id>.profile.json``; rejects traversal."""
-    if not SAFE_ID_RE.match(profile_id):
+    if not _safe_id(profile_id):
         raise ValidationError("invalid profile id")
-    key = fingerprint if fingerprint and SAFE_ID_RE.match(fingerprint) else profile_id
-    if not SAFE_ID_RE.match(key):
+    key = fingerprint if fingerprint and _safe_id(fingerprint) else profile_id
+    if not _safe_id(key):
         raise ValidationError("invalid fingerprint")
     return profile_dir / f"{key}.profile.json"
 
@@ -86,7 +91,7 @@ def list_profiles(profile_dir: Path) -> list[Path]:
 
 def find_profile(profile_dir: Path, profile_ref: str) -> Path:
     """Locate by exact filename stem (profile_id or fingerprint prefix)."""
-    if not SAFE_ID_RE.match(profile_ref):
+    if not _safe_id(profile_ref):
         raise ValidationError("invalid profile reference")
     direct = profile_dir / f"{profile_ref}.profile.json"
     if direct.is_file():
