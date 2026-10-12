@@ -33,7 +33,20 @@ validates the result, and makes every important decision traceable.
 ## Quickstart
 
 ```bash
-uv sync                      # or: pip install -e .
+uv sync
+source .venv/bin/activate   # bash/zsh; fish: source .venv/bin/activate.fish
+```
+
+`uv sync` installs the `qc` entry point into `.venv/bin/` but does **not**
+activate it, so `.venv/bin` is not on your `PATH` until you run the
+second line. That is the only setup step the examples below assume.
+
+No-activation alternative: `uv run qc …` resolves the entry point from
+this project (it works from the repository directory; `uv run --project
+/path/to/qc` works from anywhere) — the Development section uses it
+throughout.
+
+```bash
 qc init                      # qc.toml, strict policy, directories
 qc doctor                    # environment + connector diagnostics
 
@@ -61,8 +74,9 @@ qc generate validate output/synth.jsonl --profile <profile-id>
 Fixture (JSONL/CSV) sources let you try everything without a database:
 
 ```bash
-qc source add demo --type fixture --connection-ref env:QC_FIXTURE_ROOT \
-  --dataset people.jsonl
+export QC_FIXTURE_ROOT=$PWD/data
+qc source add demo --type fixture \
+  --connection-ref env:QC_FIXTURE_ROOT --dataset people.jsonl
 ```
 
 ## MCP
