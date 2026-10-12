@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Sync dependencies
+        run: uv sync --locked
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Format check
+        run: uv run ruff format --check src tests
+      - name: Type check
+        run: uv run mypy
+      - name: Unit & property tests
+        run: uv run pytest tests/unit tests/property tests/security -q
+      - name: Contract tests (fixture connectors)
+        run: uv run pytest tests/contract -q -k "fixture or fake or bridge"
+
+  integration-db:
+    runs-on: ubuntu-latest
+    needs: checks
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: qc_test
+          POSTGRES_USER: qc_test
+          POSTGRES_DB: qc_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U qc_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: qc_test
+          MYSQL_DATABASE: qc_test
+          MYSQL_USER: qc_test
+          MYSQL_PASSWORD: qc_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      QC_TEST_POSTGRES_DSN: postgresql://qc_test:qc_test@127.0.0.1:5432/qc_test
+      QC_TEST_MYSQL_DSN: mysql://qc_test:qc_test@127.0.0.1:3306/qc_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: Connector contract tests (live)
+        run: uv run pytest tests/integration tests/contract -q -m integration

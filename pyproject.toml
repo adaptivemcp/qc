@@ -1,0 +1,86 @@
+[project]
+name = "qc"
+version = "0.1.0"
+description = "QueryCleaner/QC - local-first data profiling, sanitization, and synthetic data generation with CLI and MCP interfaces"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "QC Contributors" }]
+keywords = ["data-profiling", "synthetic-data", "privacy", "mcp", "sanitization"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Security",
+]
+dependencies = [
+    "typer>=0.12,<1",
+    "pydantic>=2.7,<3",
+    "mcp>=1.2,<2",
+    "faker>=30,<35",
+    "pyyaml>=6,<7",
+    "httpx>=0.27,<1",
+    "typing-extensions>=4.12,<5",
+]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2,<4"]
+mysql = ["mysql-connector-python>=9,<10"]
+all = ["qc[postgres]", "qc[mysql]"]
+
+[project.scripts]
+qc = "qc.cli.app:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "pytest-asyncio>=0.24,<1",
+    "hypothesis>=6.110,<7",
+    "ruff>=0.8,<1",
+    "mypy>=1.13,<2",
+    "psycopg[binary]>=3.2,<4",
+    "mysql-connector-python>=9,<10",
+    "types-pyyaml>=6.0.12",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: tests that need live external services (databases, sheets APIs)",
+    "slow: long-running tests",
+]
+filterwarnings = ["error::DeprecationWarning:qc.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["qc"]
+exclude = ["qc/jdbc_bridge/sidecar"]
+
+[[tool.mypy.overrides]]
+module = ["faker.*", "yaml.*", "psycopg.*", "mysql.*", "mcp.*", "typer.*"]
+ignore_missing_imports = true
