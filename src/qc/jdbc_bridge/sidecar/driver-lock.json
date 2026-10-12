@@ -1,0 +1,11 @@
+{
+  "driver": "com.aliyun.odps.jdbc",
+  "version": "REPLACE_WITH_PINNED_VERSION",
+  "sha256": "REPLACE_WITH_64_CHAR_SHA256_OF_DRIVER_JAR",
+  "notes": [
+    "Before release: verify the current official MaxCompute JDBC driver",
+    "version, supported Java runtime, authentication modes, and SQL",
+    "dialect against Alibaba's documentation (ADR-006, SPEC 6.4).",
+    "Pin version + SHA-256 here; the sidecar refuses to start on mismatch."
+  ]
+}
