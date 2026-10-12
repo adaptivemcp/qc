@@ -1030,6 +1030,30 @@ def job_show(
     emit(job, opts=opts, text=json.dumps(job.json_safe(), indent=2))
 
 
+@app.command("mcp")
+@handle_errors
+def mcp_cmd(
+    transport: str = typer.Option(
+        "stdio", "--transport", help="stdio | http (http requires config + auth)"
+    ),
+    root: RootOpt = None,
+    config: ConfigOpt = None,
+    quiet: QuietOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Serve the MCP server (stdio by default; HTTP needs explicit auth)."""
+    from qc.mcp.server import run_http, run_stdio
+
+    _opts(False, quiet, verbose, "text")
+    rt = _runtime(root, config)
+    if transport == "http":
+        run_http(rt)
+    elif transport == "stdio":
+        run_stdio(rt)
+    else:
+        raise InvalidArgumentsError(f"unknown transport '{transport}'")
+
+
 @app.command("doctor")
 @handle_errors
 def doctor_cmd(
