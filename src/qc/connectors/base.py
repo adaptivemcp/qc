@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from qc.domain.cancellation import CancellationToken
 from qc.domain.enums import DatasetKind, Measurement
 from qc.domain.models import (
     ConnectionTest,
@@ -69,6 +70,8 @@ class SampleRequest:
     offset: int = 0
     seed: int = 0
     timeout_seconds: float = 30.0
+    #: cooperative cancel signal checked between fetched batches (SPEC 6.1)
+    cancel: CancellationToken | None = None
 
 
 @dataclass
@@ -140,6 +143,10 @@ class BaseConnector:
 
     def __init__(self) -> None:
         self._closed = False
+        #: set by the profiler so inner fetches observe cancellation
+        self.cancel: CancellationToken | None = None
+        #: count of transient retries performed (SPEC 15 metrics)
+        self.retry_count = 0
 
     async def close(self) -> None:
         self._closed = True

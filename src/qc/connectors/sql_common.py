@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from qc.domain.errors import InvalidArgumentsError, SourceError, UnsupportedError
@@ -181,3 +181,55 @@ def safety_check_dataset(ref: str) -> None:
         raise InvalidArgumentsError(
             "dataset reference contains illegal characters", detail={"ref": ref[:64]}
         )
+
+
+def build_where(
+    predicate: dict[str, Any] | None,
+    *,
+    quote: Callable[[str], str],
+    placeholder: str = "%s",
+) -> tuple[str, list[Any]]:
+    """Translate a typed predicate into a parameterized WHERE clause.
+
+    Returns ``("", [])`` when there is no predicate, otherwise
+    ``(" WHERE ...", [params...])``. Column names are validated and
+    quoted; values are always bound as parameters. ``and`` predicates
+    combine recursively. This is the *only* path by which CLI/MCP
+    predicates reach SQL (SPEC 11.2, 16.5).
+    """
+    if not predicate:
+        return "", []
+    clauses: list[str] = []
+    params: list[Any] = []
+    for clause in _clauses(predicate):
+        col = clause.get("column")
+        op = clause.get("op", "=")
+        if not isinstance(col, str) or not _SAFE_IDENT.match(col):
+            raise InvalidArgumentsError("unsafe predicate column", detail={"column": str(col)[:64]})
+        qcol = quote(col)
+        if op == "in":
+            values = clause.get("values") or []
+            if not values:
+                raise InvalidArgumentsError("'in' predicate needs at least one value")
+            marks = ", ".join(placeholder for _ in values)
+            clauses.append(f"{qcol} IN ({marks})")
+            params.extend(values)
+        elif op in ("=", "!=", "<", "<=", ">", ">="):
+            sql_op = "<>" if op == "!=" else op
+            clauses.append(f"{qcol} {sql_op} {placeholder}")
+            params.append(clause.get("value"))
+        elif op == "like":
+            clauses.append(f"{qcol} LIKE {placeholder}")
+            params.append(clause.get("value"))
+        else:
+            raise InvalidArgumentsError(f"unsupported predicate operator '{op}'")
+    return " WHERE " + " AND ".join(clauses), params
+
+
+def _clauses(predicate: dict[str, Any]) -> list[dict[str, Any]]:
+    if predicate.get("op") == "and":
+        out: list[dict[str, Any]] = []
+        for c in predicate.get("clauses", []):
+            out.extend(_clauses(c))
+        return out
+    return [predicate]

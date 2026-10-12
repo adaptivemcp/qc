@@ -233,15 +233,24 @@ class QCService:
         )
         engine.require(Operation.PROFILE_RUN, ctx)
 
+        from qc.application.job_runner import JobRunner, run_job
         from qc.artifacts.profiles import save_profile
         from qc.cli.app import _parse_dataset_ref
-        from qc.domain.enums import Budget
+        from qc.domain.enums import Budget, OperationKind
         from qc.profiling.engine import Profiler, ProfileSettings
 
         # server maxima; args can only narrow (SPEC 12.2 tool 4)
         max_q = args.max_queries
         if max_q is not None:
             max_q = min(max_q, self.ceiling.max_queries)
+        ref = _parse_dataset_ref(cfg, args.dataset_id)
+        runner = JobRunner(
+            self.rt,
+            kind="profile",
+            actor="mcp",
+            source_id=cfg.id,
+            dataset_id=args.dataset_id,
+        )
         settings = ProfileSettings(
             sample_size=min(args.sample_size, self.ceiling.max_rows),
             budget=Budget(
@@ -252,10 +261,8 @@ class QCService:
             ),
             sensitivity_scan=args.sensitivity_scan,
             allow_full_scan=False,
+            cancel=runner.token,
         )
-        ref = _parse_dataset_ref(cfg, args.dataset_id)
-
-        import asyncio
 
         async def _run() -> Any:
             connector = self.rt.connector_for(cfg)
@@ -267,21 +274,16 @@ class QCService:
             finally:
                 await connector.close()
 
-        result = asyncio.run(_run())
+        try:
+            outcome = asyncio_run(run_job(runner, _run, operation_kind=OperationKind.PROFILE))
+        except Exception:
+            # job already recorded as failed/cancelled by run_job
+            raise
+        result = outcome.result
         artifact = result.artifact
         path = save_profile(self.rt.paths.profiles, artifact)
         self.rt.state.index_profile(artifact, path)
-        self._audit(
-            __import__("qc.domain.enums", fromlist=["OperationKind"]).OperationKind.PROFILE,
-            actor="mcp",
-            source_id=cfg.id,
-            dataset_id=args.dataset_id,
-            policy_version=engine.policy.version,
-            decision="allow",
-            rows_affected=result.budget_usage.rows,
-            duration_seconds=artifact.duration_seconds,
-            result_status="ok",
-        )
+        runner.complete(result_ref=str(path), message=f"profile {artifact.profile_id}")
         summary = {
             "profile_id": artifact.profile_id,
             "row_count": artifact.row_count,
@@ -306,6 +308,7 @@ class QCService:
         return Envelope.build(
             summary,
             warnings=artifact.warnings,
+            job_id=runner.id,
             profile_id=artifact.profile_id,
             policy_version=engine.policy.version,
         ).model_dump()
@@ -406,6 +409,7 @@ class QCService:
         engine = self._engine()
         # create_plan enforces DATASET_READ with the resolved source name
         from qc.application.generation import create_plan, run_generation
+        from qc.application.job_runner import JobRunner
 
         plan = create_plan(
             self.rt,
@@ -414,14 +418,29 @@ class QCService:
             seed=args.seed if args.seed is not None else 0,
         )
         plan_file = self.rt.paths.reports / f"{plan.plan_id}.plan.json"
-        result = asyncio_run(
-            run_generation(
-                self.rt,
-                plan_file=plan_file,
-                output=self.rt.paths.output / f"mcp_{plan.plan_id}.jsonl",
-            )
+        # generation honors the same cancellation token (SPEC 12.2 tool 10)
+        runner = JobRunner(
+            self.rt,
+            kind="generate",
+            actor="mcp",
+            source_id=plan.dataset.source_id,
+            dataset_id=plan.dataset.qualified_name,
         )
+        runner.start("generating")
+        try:
+            result = asyncio_run(
+                run_generation(
+                    self.rt,
+                    plan_file=plan_file,
+                    output=self.rt.paths.output / f"mcp_{plan.plan_id}.jsonl",
+                    cancel=runner.token,
+                )
+            )
+        except BaseException as exc:
+            runner.fail(exc)
+            raise
         rep = result["report"]
+        runner.complete(result_ref=result["output"], message=f"generated {rep.rows_generated} rows")
         data: dict[str, Any] = {
             "plan_id": plan.plan_id,
             "artifact_ref": result["output"],
@@ -442,6 +461,7 @@ class QCService:
         return Envelope.build(
             data,
             warnings=rep.warnings,
+            job_id=runner.id,
             profile_id=args.profile_id,
             policy_version=engine.policy.version,
         ).model_dump()
@@ -495,6 +515,7 @@ class QCService:
         ).model_dump()
 
     def cancel_job(self, raw: dict[str, Any]) -> dict[str, Any]:
+        from qc.application.cancellation import REGISTRY
         from qc.domain.enums import JobStatus, OperationKind
 
         args = JobIdInput.model_validate(raw)
@@ -503,15 +524,28 @@ class QCService:
             raise NotFoundError(f"job not found: {args.job_id}")
         if not job.cancellable:
             raise ValidationError("job is not cancellable")
-        self.rt.state.set_job_status(job.id, JobStatus.CANCELLED, message="cancelled by caller")
+
+        # signal a running job first (cooperative); then reflect the state.
+        signalled = REGISTRY.cancel(job.id, "cancelled by caller")
+        running = job.status == JobStatus.RUNNING
+        if signalled or running:
+            self.rt.state.set_job_status(
+                job.id, JobStatus.CANCELLED, message="cancellation requested"
+            )
+            status = "cancelling" if signalled else "cancelled"
+        else:
+            # terminal job: no-op, report its actual status
+            status = job.status.value
         self.rt.audit.record(
             OperationKind.CANCEL_JOB,
             actor="mcp",
             decision="allow",
             result_status="ok",
-            detail={"job_id": job.id},
+            detail={"job_id": job.id, "signalled": str(signalled)},
         )
-        return Envelope.build({"job_id": job.id, "status": "cancelled"}, job_id=job.id).model_dump()
+        return Envelope.build(
+            {"job_id": job.id, "status": status, "in_flight": signalled}, job_id=job.id
+        ).model_dump()
 
     def get_policy_summary(self, raw: dict[str, Any]) -> dict[str, Any]:
         args = GetPolicySummaryInput.model_validate(raw)

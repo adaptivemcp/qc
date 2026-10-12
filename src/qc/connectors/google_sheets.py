@@ -20,6 +20,7 @@ from qc.connectors.base import (
     ProfileQueryResult,
     SampleRequest,
 )
+from qc.connectors.resilience import RetryPolicy, TransientError, with_retry
 from qc.connectors.sheet_normalize import (
     SheetNormalization,
     normalize_rows,
@@ -39,6 +40,7 @@ from qc.domain.models import (
     SizeEstimate,
     SourceConfig,
 )
+from qc.observability.logging import get_logger
 from qc.security.redaction import safe_error_message
 from qc.security.secrets import resolve_secret
 
@@ -59,10 +61,17 @@ class GoogleSheetsConnector(BaseConnector):
         named=("metadata", "aggregates", "sampling", "cancellation"),
     )
 
-    def __init__(self, *, http: Any = None, page_size: int = 5000) -> None:
+    def __init__(
+        self,
+        *,
+        http: Any = None,
+        page_size: int = 5000,
+        retry: RetryPolicy | None = None,
+    ) -> None:
         super().__init__()
         self._http = http  # injectable httpx.AsyncClient for tests
         self.page_size = page_size
+        self.retry = retry or RetryPolicy(attempts=3, base_delay=0.2, max_delay=5.0)
         self._token: str | None = None
         self._cache: dict[str, dict[str, Any]] = {}
 
@@ -87,16 +96,37 @@ class GoogleSheetsConnector(BaseConnector):
         return self._token
 
     async def _get(self, config: SourceConfig, path: str, params: dict[str, Any]) -> dict[str, Any]:
-        client = await self._client()
-        token = await self._access_token(config)
+        async def attempt() -> dict[str, Any]:
+            client = await self._client()
+            token = await self._access_token(config)
+            try:
+                resp = await client.get(
+                    path,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            except Exception as exc:  # network blip: retryable (SPEC 6.1)
+                raise TransientError(safe_error_message(exc)) from exc
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise TransientError(f"HTTP {resp.status_code}", status_code=resp.status_code)
+            self._raise_for_status(resp)
+            payload: dict[str, Any] = resp.json()
+            return payload
+
         try:
-            resp = await client.get(
-                path,
-                params=params,
-                headers={"Authorization": f"Bearer {token}"},
+            return await with_retry(
+                attempt,
+                self.retry,
+                cancel=self.cancel,
+                on_retry=self._on_retry,
             )
-        except Exception as exc:
-            raise SourceError(safe_error_message(exc), detail={"connector": self.name}) from exc
+        except TransientError as exc:
+            raise SourceError(
+                "Google API rate limited/unavailable after retries; retry later",
+                detail={"connector": self.name},
+            ) from exc
+
+    def _raise_for_status(self, resp: Any) -> None:
         if resp.status_code == 404:
             raise NotFoundError("spreadsheet or range not found")
         if resp.status_code in (401, 403):
@@ -104,16 +134,19 @@ class GoogleSheetsConnector(BaseConnector):
                 "spreadsheet permission denied (check OAuth scopes / sharing)",
                 detail={"status": str(resp.status_code)},
             )
-        if resp.status_code == 429:
-            raise SourceError("Google API rate limited; retry later", detail={"status": "429"})
         if resp.status_code >= 400:
             body = _safe_error_body(resp)
             raise SourceError(
                 f"Google API error {resp.status_code}: {body}",
                 detail={"status": str(resp.status_code)},
             )
-        payload: dict[str, Any] = resp.json()
-        return payload
+
+    def _on_retry(self, attempt_no: int, exc: BaseException) -> None:
+        self.retry_count += 1
+        log.info(
+            "google api transient failure; retrying",
+            fields={"error_code": "RETRY", "detail": type(exc).__name__},
+        )
 
     # ----------------------------------------------------------------- API
 
@@ -465,3 +498,6 @@ def _decode_b64(value: str) -> bytes:  # pragma: no cover - helper
 
 def _json_default(value: Any) -> str:  # pragma: no cover - helper
     return json.dumps(value, default=str)
+
+
+log = get_logger("google-sheets")

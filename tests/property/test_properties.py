@@ -271,11 +271,18 @@ def test_denied_columns_never_in_output(col_name: str) -> None:
 def test_secret_redacted_in_logs_and_errors(secret: str) -> None:
     from qc.security.redaction import redact_text, safe_error_message
 
+    # Assert on the *value* position, not on the substring: a generated
+    # secret may itself equal a keyword (e.g. "password"), in which case
+    # the keyword legitimately remains as the field name while the value
+    # is redacted.
     message = f"connection failed: password={secret}"
     rendered = redact_text(message)
-    assert secret not in rendered
+    assert f"={secret}" not in rendered
+    assert "[REDACTED]" in rendered
+
     exc_text = safe_error_message(RuntimeError(f"dsn postgres://u:{secret}@host/db"))
-    assert secret not in exc_text
+    assert f":{secret}@" not in exc_text
+    assert "[REDACTED]" in exc_text
 
 
 @given(secret=st.text(min_size=8, max_size=30, alphabet="abcdef0123456789"))

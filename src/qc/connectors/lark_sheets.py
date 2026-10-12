@@ -18,6 +18,7 @@ from qc.connectors.base import (
     ProfileQueryResult,
     SampleRequest,
 )
+from qc.connectors.resilience import RetryPolicy, TransientError, with_retry
 from qc.connectors.sheet_normalize import (
     SheetNormalization,
     normalize_rows,
@@ -33,6 +34,7 @@ from qc.domain.models import (
     SizeEstimate,
     SourceConfig,
 )
+from qc.observability.logging import get_logger
 from qc.security.redaction import safe_error_message
 from qc.security.secrets import resolve_secret
 
@@ -55,10 +57,17 @@ class LarkSheetsConnector(BaseConnector):
         named=("metadata", "aggregates", "sampling", "cancellation"),
     )
 
-    def __init__(self, *, http: Any = None, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        http: Any = None,
+        base_url: str | None = None,
+        retry: RetryPolicy | None = None,
+    ) -> None:
         super().__init__()
         self._http = http
         self.base_url = base_url or LARK_BASE
+        self.retry = retry or RetryPolicy(attempts=3, base_delay=0.2, max_delay=5.0)
         self._token: str | None = None
         self._domain: str | None = None  # provider id, not display name
 
@@ -85,26 +94,55 @@ class LarkSheetsConnector(BaseConnector):
     async def _get(
         self, config: SourceConfig, path: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
-        client = await self._client()
-        token = await self._token_value(config)
-        try:
-            resp = await client.get(
-                path,
-                params=params or {},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        except Exception as exc:
-            raise SourceError(safe_error_message(exc), detail={"connector": self.name}) from exc
-        return self._handle(resp)
+        return await self._request(config, "GET", path, params=params or {})
 
     async def _post(self, config: SourceConfig, path: str, body: dict[str, Any]) -> dict[str, Any]:
-        client = await self._client()
-        token = await self._token_value(config)
+        return await self._request(config, "POST", path, body=body)
+
+    async def _request(
+        self,
+        config: SourceConfig,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        async def attempt() -> dict[str, Any]:
+            client = await self._client()
+            token = await self._token_value(config)
+            headers = {"Authorization": f"Bearer {token}"}
+            try:
+                if method == "GET":
+                    resp = await client.get(path, params=params or {}, headers=headers)
+                else:
+                    resp = await client.post(path, json=body, headers=headers)
+            except Exception as exc:  # network blip: retryable (SPEC 6.1)
+                raise TransientError(safe_error_message(exc)) from exc
+            # Lark rate limits / server errors are transient (SPEC 6.6)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise TransientError(f"HTTP {resp.status_code}", status_code=resp.status_code)
+            return self._handle(resp)
+
         try:
-            resp = await client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
-        except Exception as exc:
-            raise SourceError(safe_error_message(exc), detail={"connector": self.name}) from exc
-        return self._handle(resp)
+            return await with_retry(
+                attempt,
+                self.retry,
+                cancel=self.cancel,
+                on_retry=self._on_retry,
+            )
+        except TransientError as exc:
+            raise SourceError(
+                "Lark API rate limited/unavailable after retries; retry later",
+                detail={"connector": self.name},
+            ) from exc
+
+    def _on_retry(self, attempt_no: int, exc: BaseException) -> None:
+        self.retry_count += 1
+        log.info(
+            "lark api transient failure; retrying",
+            fields={"error_code": "RETRY", "detail": type(exc).__name__},
+        )
 
     def _handle(self, resp: Any) -> dict[str, Any]:
         if resp.status_code in (401, 403):
@@ -112,9 +150,6 @@ class LarkSheetsConnector(BaseConnector):
                 "Lark permission denied (check app scopes / tenant authorization)",
                 detail={"status": str(resp.status_code)},
             )
-        if resp.status_code == 429:
-            # Lark rate limits: caller applies backoff (SPEC 6.6)
-            raise SourceError("Lark API rate limited", detail={"status": "429"})
         if resp.status_code >= 400:
             raise SourceError(
                 f"Lark API error {resp.status_code}", detail={"status": str(resp.status_code)}
@@ -401,3 +436,6 @@ def _fingerprint(locator: str, columns: list[str], rows: int) -> str:
     h = hashlib.sha256()
     h.update(f"lk|{locator}|{','.join(columns)}|{rows}".encode())
     return f"lk_{h.hexdigest()[:24]}"
+
+
+log = get_logger("lark-sheets")

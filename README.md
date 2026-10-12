@@ -44,11 +44,14 @@ qc policy grant strict-local analytics --dataset public.orders   # explicit gran
 qc dataset list analytics
 
 qc profile run analytics public.orders --max-queries 40 --sample-size 2000
+qc profile run analytics public.orders --where region=US --where age:>=:18
 qc profile show <profile-id>
 
 qc sanitize preview analytics public.orders --policy strict-local --limit 10
 qc sanitize export  analytics public.orders --policy strict-local \
   --output output/safe.jsonl
+qc sanitize export  analytics public.orders --policy strict-local \
+  --output output/safe.csv --format csv --delimiter ';' --no-header
 
 qc generate plan <profile-id> --rows 1000 --seed 42
 qc generate run reports/plan_*.plan.json --output output/synth.jsonl
@@ -100,6 +103,7 @@ writes, credential management, raw-row dumps.
 | [docs/synthetic-data.md](docs/synthetic-data.md) | strategies, fidelity, privacy limits |
 | [docs/mcp.md](docs/mcp.md) | transports, tools, auth, client setup |
 | [docs/operations.md](docs/operations.md) | deploy, log, upgrade, retain |
+| [docs/gaps.md](docs/gaps.md) | development gap assessment and resolutions |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
 ## Development

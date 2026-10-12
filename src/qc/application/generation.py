@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from qc.artifacts.profiles import find_profile, load_profile
+from qc.domain.cancellation import CancellationToken
 from qc.domain.enums import OperationKind
 from qc.domain.errors import GenerationError, NotFoundError, ValidationError
 from qc.domain.models import GenerationPlan, GenerationReport, StrategyOverride
 from qc.generation.strategies import GenerationContext, execute, resolve_strategy
 from qc.generation.validation import validate_generation
+from qc.observability.metrics import OperationMetrics
 from qc.security.policy import DecisionContext, Operation
 
 if TYPE_CHECKING:
@@ -167,11 +169,20 @@ async def run_generation(
     seed: int | None = None,
     strict: bool = False,
     allow_fallbacks: bool = False,
+    cancel: CancellationToken | None = None,
 ) -> dict[str, Any]:
-    """Execute a generation plan: synthesize, validate, report."""
+    """Execute a generation plan: synthesize, validate, report.
+
+    ``cancel`` is polled between generated rows and before writing output
+    so a cancelled job never leaves a partial artifact marked complete.
+    """
     from faker import Faker
 
     from qc.exports.csv_writer import write_csv_rows
+
+    def check_cancel() -> None:
+        if cancel is not None:
+            cancel.raise_if_cancelled()
 
     if not plan_file.is_file():
         raise NotFoundError(f"plan not found: {plan_file.name}")
@@ -203,6 +214,7 @@ async def run_generation(
     )
 
     started = time.monotonic()
+    metrics = OperationMetrics(operation="generate")
     rng = random.Random(plan.seed)
     fake = Faker(plan.locale)
     Faker.seed(plan.seed)
@@ -272,6 +284,7 @@ async def run_generation(
     rows: list[dict[str, Any]] = []
     warnings: list[str] = list(pre_warnings)
     for i in range(plan.rows):
+        check_cancel()
         context.row_index = i
         row: dict[str, Any] = {}
         for col_name, strat_plan in resolved.items():
@@ -286,9 +299,11 @@ async def run_generation(
         rows.append(row)
 
     # Validate against profile (SPEC 9.5)
-    metrics = validate_generation(rows, primary, tolerances=None)
-    hard_failures = [m for m in metrics if m.hard and not m.passed]
-    soft_failures = [m for m in metrics if not m.hard and not m.passed]
+    fidelity = validate_generation(rows, primary, tolerances=None)
+    hard_failures = [m for m in fidelity if m.hard and not m.passed]
+    soft_failures = [m for m in fidelity if not m.hard and not m.passed]
+    metrics.rows_generated = len(rows)
+    metrics.validation_failures = len(hard_failures) + len(soft_failures)
 
     if plan.preserve_relationships:
         for rel in primary.relationships:
@@ -298,6 +313,10 @@ async def run_generation(
                     "preservation is declarative in v1"
                 )
 
+    metrics.stop()
+    from qc.observability.metrics import RECORDER
+
+    RECORDER.record(metrics)
     warnings.extend(
         [
             "synthetic data is NOT anonymous; empirical-distribution synthesis "
@@ -309,21 +328,22 @@ async def run_generation(
         warnings.append(f"fallback strategies used for: {', '.join(fallbacks)}")
 
     # Write output
+    check_cancel()
     out_path = output or (rt.paths.output / f"synthetic.{plan.output_format}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if plan.output_format == "csv":
         write_csv_rows(out_path, rows)
     else:
-        with out_path.open("w", encoding="utf-8") as fh:
-            for row in rows:
-                fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        from qc.exports.jsonl import write_jsonl
+
+        write_jsonl(out_path, rows)
 
     report = GenerationReport(
         plan_id=plan.plan_id,
         rows_requested=plan.rows,
         rows_generated=len(rows),
         seed=plan.seed,
-        metrics=metrics,
+        metrics=fidelity,
         constraint_violations=[
             f"{m.name}: generated {m.generated} vs observed {m.observed}" for m in hard_failures
         ],
@@ -331,7 +351,7 @@ async def run_generation(
         warnings=warnings,
         preserved_properties=[
             m.name
-            for m in metrics
+            for m in fidelity
             if m.passed and m.name.endswith(("null_rate", "categorical_tvd"))
         ],
         approximated_properties=[m.name for m in soft_failures],
@@ -362,6 +382,7 @@ async def run_generation(
         "report_path": str(rpath),
         "hard_failures": len(hard_failures),
         "soft_failures": len(soft_failures),
+        "metrics": metrics.as_dict(),
     }
 
 

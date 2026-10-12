@@ -53,7 +53,26 @@ inline. `file:` secrets must be chmod 600.
   parameters, unredacted SQL, connection strings.
 - Audit trail: append-only `audit.jsonl` (mode 0600) with actor,
   operation, decision, counts, duration, correlation id.
+- **Metrics** (`qc.observability.metrics`): each profile/generation run
+  records queries, rows scanned/returned, bytes processed, retries,
+  cancellations, budget rejections, generated rows, validation failures,
+  connector health, and elapsed time; a `qc.metrics` structured log line
+  is emitted and the values appear in `--json` output.
 - `--verbose` → debug level; `--quiet` → warnings and errors only.
+
+## Reliability
+
+- **Retries:** transient, idempotent read failures (connection resets,
+  deadlocks, serialization failures, HTTP 429/5xx) are retried with
+  bounded exponential backoff + jitter, respecting the request deadline
+  and cancellation. Non-transient errors (validation, policy) never
+  retry. Retry counts feed metrics (SPEC 6.1).
+- **Connection pooling:** SQL connectors use a bounded pool
+  (`AsyncConnectionPool`); a connection that errors while checked out is
+  discarded rather than reused. Pool bounds are configurable per source.
+- **Cancellation:** CLI `Ctrl-C` and MCP `cancel_job` cooperatively stop
+  in-flight work and close cursors/connections (SPEC 4.3, 12.6).
+
 
 ## Diagnostics
 

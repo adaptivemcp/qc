@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from qc.connectors.base import (
@@ -18,15 +19,18 @@ from qc.connectors.base import (
     ProfileQueryResult,
     SampleRequest,
 )
+from qc.connectors.pool import AsyncConnectionPool
+from qc.connectors.resilience import RetryPolicy, with_retry
 from qc.connectors.sql_common import (
     assert_not_dangerous_sql,
+    build_where,
     map_db_error,
     quote_ident,
     safety_check_dataset,
     split_qualified,
 )
 from qc.domain.enums import DatasetKind, LogicalType, Measurement
-from qc.domain.errors import NotFoundError, SourceError, UnsupportedError
+from qc.domain.errors import CancelledError, NotFoundError, SourceError, UnsupportedError
 from qc.domain.models import (
     ColumnSchema,
     ConnectionTest,
@@ -37,6 +41,7 @@ from qc.domain.models import (
     SizeEstimate,
     SourceConfig,
 )
+from qc.observability.logging import get_logger
 from qc.security.secrets import resolve_secret
 
 # PostgreSQL type → logical type (SPEC 6.2 mapping)
@@ -84,11 +89,27 @@ class PostgresConnector(BaseConnector):
         named=("metadata", "aggregates", "sampling", "cancellation", "statistics"),
     )
 
-    def __init__(self, *, connect_timeout: int = 10, statement_timeout_ms: int = 30_000) -> None:
+    def __init__(
+        self,
+        *,
+        connect_timeout: int = 10,
+        statement_timeout_ms: int = 30_000,
+        retry: RetryPolicy | None = None,
+        pool_min_size: int = 1,
+        pool_max_size: int = 4,
+    ) -> None:
         super().__init__()
         self.connect_timeout = connect_timeout
         self.statement_timeout_ms = statement_timeout_ms
-        self._pool: Any = None
+        self.retry = retry or RetryPolicy(
+            attempts=3,
+            base_delay=0.2,
+            max_delay=5.0,
+            deadline_seconds=statement_timeout_ms / 1000,
+        )
+        self.pool_min_size = pool_min_size
+        self.pool_max_size = max(1, pool_max_size)
+        self._pool: AsyncConnectionPool[Any] | None = None
         self._dsn: str | None = None
 
     # ------------------------------------------------------------- lifecycle
@@ -98,9 +119,7 @@ class PostgresConnector(BaseConnector):
             self._dsn = resolve_secret(config.connection_ref)
         return self._dsn
 
-    async def _conn(self, config: SourceConfig) -> Any:
-        if self._pool is not None:
-            return self._pool
+    async def _open_connection(self, config: SourceConfig) -> Any:
         try:
             import psycopg
         except ImportError as exc:
@@ -108,10 +127,9 @@ class PostgresConnector(BaseConnector):
                 "psycopg is not installed; install qc[postgres]",
                 detail={"extra": "postgres"},
             ) from exc
-        dsn = self._dsn_for(config)
         try:
-            self._pool = await psycopg.AsyncConnection.connect(
-                dsn,
+            conn = await psycopg.AsyncConnection.connect(
+                self._dsn_for(config),
                 connect_timeout=self.connect_timeout,
                 autocommit=True,
                 options=f"-c statement_timeout={self.statement_timeout_ms}",
@@ -121,8 +139,25 @@ class PostgresConnector(BaseConnector):
         # Enforce read-only session even if the role can write (SPEC 6.2);
         # privilege may disallow it — role-level read-only still applies.
         with contextlib.suppress(Exception):
-            await self._pool.execute("SET default_transaction_read_only = on")
+            await conn.execute("SET default_transaction_read_only = on")
+        return conn
+
+    def _get_pool(self, config: SourceConfig) -> AsyncConnectionPool[Any]:
+        if self._pool is None:
+            self._pool = AsyncConnectionPool(
+                lambda: self._open_connection(config),
+                lambda conn: conn.close(),
+                min_size=self.pool_min_size,
+                max_size=self.pool_max_size,
+            )
         return self._pool
+
+    @asynccontextmanager
+    async def _acquire(self, config: SourceConfig) -> AsyncIterator[Any]:
+        """Check out a pooled connection (SPEC 6.1 pooling limits)."""
+        pool = self._get_pool(config)
+        async with pool.connection() as conn:
+            yield conn
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -135,11 +170,23 @@ class PostgresConnector(BaseConnector):
         self, config: SourceConfig, sql: str, params: tuple[Any, ...] = ()
     ) -> list[tuple[Any, ...]]:
         assert_not_dangerous_sql(sql)
-        conn = await self._conn(config)
+
+        async def attempt() -> list[tuple[Any, ...]]:
+            async with self._acquire(config) as conn:
+                cur = await conn.execute(sql, params)
+                fetched: list[tuple[Any, ...]] = await cur.fetchall()
+                return fetched
+
+        def on_retry(attempt_no: int, exc: BaseException) -> None:
+            self.retry_count += 1
+            log.info(
+                "transient query failure; retrying",
+                fields={"error_code": "RETRY", "detail": type(exc).__name__},
+            )
+
         try:
-            cur = await conn.execute(sql, params)
-            fetched: list[tuple[Any, ...]] = await cur.fetchall()
-            return fetched
+            # reads are idempotent: retry only transient failures (SPEC 6.1)
+            return await with_retry(attempt, self.retry, cancel=self.cancel, on_retry=on_retry)
         except Exception as exc:
             raise map_db_error(exc, connector=self.name) from exc
 
@@ -343,16 +390,22 @@ class PostgresConnector(BaseConnector):
         col_sql = quote_ident(str(col)) if col else None
         kind = query.kind
         started = time.monotonic()
+        where_sql, where_params = build_where(
+            query.params.get("predicate"), quote=lambda c: quote_ident(c)
+        )
+        wparams: tuple[Any, ...] = tuple(where_params)
 
         if kind == "row_count":
-            rows = await self._fetch(config, f"SELECT count(*) FROM {qual}")
+            rows = await self._fetch(config, f"SELECT count(*) FROM {qual}{where_sql}", wparams)
             return self._result(kind, {"row_count": int(rows[0][0])}, started)
 
         if kind == "null_count":
             self._need(col_sql)
             rows = await self._fetch(
                 config,
-                f"SELECT count(*), count(*) FILTER (WHERE {col_sql} IS NULL) FROM {qual}",
+                f"SELECT count(*), count(*) FILTER (WHERE {col_sql} IS NULL) "
+                f"FROM {qual}{where_sql}",
+                wparams,
             )
             total, nulls = int(rows[0][0]), int(rows[0][1])
             return self._result(
@@ -366,7 +419,8 @@ class PostgresConnector(BaseConnector):
             rows = await self._fetch(
                 config,
                 f"SELECT count(DISTINCT {col_sql}), count(*) FILTER (WHERE {col_sql} IS NULL) "
-                f"FROM {qual}",
+                f"FROM {qual}{where_sql}",
+                wparams,
             )
             distinct, nulls = int(rows[0][0]), int(rows[0][1])
             return self._result(
@@ -380,7 +434,8 @@ class PostgresConnector(BaseConnector):
             self._need(col_sql)
             rows = await self._fetch(
                 config,
-                f"SELECT min({col_sql}), max({col_sql}) FROM {qual}",
+                f"SELECT min({col_sql}), max({col_sql}) FROM {qual}{where_sql}",
+                wparams,
             )
             lo, hi = rows[0]
             data: dict[str, Any] = {}
@@ -396,21 +451,23 @@ class PostgresConnector(BaseConnector):
             k = int(query.params.get("k", 10))
             rows = await self._fetch(
                 config,
-                f"SELECT {col_sql}::text AS v, count(*) AS c FROM {qual} "
+                f"SELECT {col_sql}::text AS v, count(*) AS c FROM {qual}{where_sql} "
                 f"GROUP BY 1 ORDER BY c DESC NULLS LAST LIMIT %s",
-                (k,),
+                (*wparams, k),
             )
             categories = [{"key": str(v), "count": int(c), "falsy": v is None} for v, c in rows]
             return self._result(kind, {"categories": categories}, started, rows_returned=len(rows))
 
         if kind == "length_stats":
             self._need(col_sql)
+            extra = f" AND {where_sql.strip()[6:]}" if where_sql else ""
             rows = await self._fetch(
                 config,
                 f"""SELECT min(length({col_sql}::text)), max(length({col_sql}::text)),
                        percentile_cont(0.5) WITHIN GROUP (ORDER BY length({col_sql}::text)),
                        percentile_cont(0.9) WITHIN GROUP (ORDER BY length({col_sql}::text))
-                    FROM {qual} WHERE {col_sql} IS NOT NULL""",
+                    FROM {qual} WHERE {col_sql} IS NOT NULL{extra}""",
+                wparams,
             )
             lo, hi, p50, p90 = rows[0]
             data = {}
@@ -426,7 +483,7 @@ class PostgresConnector(BaseConnector):
         if kind == "full_scan_values":
             # only reached when the planner has explicit full-scan approval
             self._need(col_sql)
-            rows = await self._fetch(config, f"SELECT {col_sql} FROM {qual}")
+            rows = await self._fetch(config, f"SELECT {col_sql} FROM {qual}{where_sql}", wparams)
             return self._result(
                 kind,
                 {"values": [r[0] for r in rows]},
@@ -449,34 +506,38 @@ class PostgresConnector(BaseConnector):
         if request.columns:
             cols_sql = ", ".join(quote_ident(c) for c in request.columns)
 
+        where_sql, where_params = build_where(request.predicate, quote=lambda c: quote_ident(c))
         if request.method == "random":
             # documented: random() sampling; bounded by LIMIT
-            sql = f"SELECT {cols_sql} FROM {qual} ORDER BY random() LIMIT %s"
-            params: tuple[Any, ...] = (request.limit,)
-        elif request.method == "predicate" and request.predicate:
-            col, value = self._safe_predicate(request.predicate)
-            sql = f"SELECT {cols_sql} FROM {qual} WHERE {quote_ident(col)} = %s ORDER BY 1 LIMIT %s"
-            params = (value, request.limit)
+            sql = f"SELECT {cols_sql} FROM {qual}{where_sql} ORDER BY random() LIMIT %s"
+            params: tuple[Any, ...] = (*where_params, request.limit)
         else:
             # stable-key ordered sampling: deterministic, avoids full random sort
             order_col = self._stable_key_col(request)
             sql = (
-                f"SELECT {cols_sql} FROM {qual} ORDER BY {quote_ident(order_col)} "
-                "LIMIT %s OFFSET %s"
+                f"SELECT {cols_sql} FROM {qual}{where_sql} "
+                f"ORDER BY {quote_ident(order_col)} LIMIT %s OFFSET %s"
             )
-            params = (request.limit, request.offset)
+            params = (*where_params, request.limit, request.offset)
 
         assert_not_dangerous_sql(sql)
-        conn = await self._conn(config)
         try:
-            cur = await conn.execute(sql, params)
-            while True:
-                records = await cur.fetchmany(200)
-                if not records:
-                    break
-                names = [d.name for d in cur.description] if cur.description else []
-                for rec in records:
-                    yield EphemeralRow(values=dict(zip(names, rec, strict=False)))
+            async with self._acquire(config) as conn:
+                cur = await conn.execute(sql, params)
+                while True:
+                    if request.cancel is not None and request.cancel.cancelled:
+                        # close the server-side cursor before unwinding (SPEC 12.6)
+                        with contextlib.suppress(Exception):
+                            await cur.close()
+                        request.cancel.raise_if_cancelled()
+                    records = await cur.fetchmany(200)
+                    if not records:
+                        break
+                    names = [d.name for d in cur.description] if cur.description else []
+                    for rec in records:
+                        yield EphemeralRow(values=dict(zip(names, rec, strict=False)))
+        except CancelledError:
+            raise
         except Exception as exc:
             raise map_db_error(exc, connector=self.name) from exc
 
@@ -530,3 +591,6 @@ def _fingerprint(ns: str, name: str, columns: list[str]) -> str:
     h = hashlib.sha256()
     h.update(f"pg|{ns}|{name}|{','.join(columns)}".encode())
     return f"pg_{h.hexdigest()[:24]}"
+
+
+log = get_logger("postgres")

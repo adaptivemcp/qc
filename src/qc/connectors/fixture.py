@@ -194,6 +194,11 @@ class FixtureConnector(BaseConnector):
     ) -> ProfileQueryResult:
         path = self._resolve(query.dataset)
         rows = self._load(path)
+        predicate = query.params.get("predicate")
+        if predicate:
+            from qc.domain.predicate import matches_row
+
+            rows = [r for r in rows if matches_row(r, predicate)]
         kind = query.kind
 
         if kind == "row_count":
@@ -304,16 +309,22 @@ class FixtureConnector(BaseConnector):
     ) -> AsyncIterator[EphemeralRow]:
         path = self._resolve(request.dataset)
         rows = self._load(path)
+        if request.predicate:
+            from qc.domain.predicate import matches_row
+
+            rows = [r for r in rows if matches_row(r, request.predicate)]
         cols = request.columns or self._columns(rows)
         start = request.offset
         window = rows[start : start + request.limit]
         for i, row in enumerate(window):
+            if request.cancel is not None and request.cancel.cancelled:
+                request.cancel.raise_if_cancelled()
             yield EphemeralRow(
                 values={c: row.get(c) for c in cols},
                 row_number=start + i + 1,
             )
-        # yield control so cancellation can interleave
-        await asyncio.sleep(0)
+            # yield control so cancellation can interleave
+            await asyncio.sleep(0)
 
     async def close(self) -> None:
         self._cache.clear()

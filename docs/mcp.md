@@ -51,8 +51,14 @@ limits.
 | `generate_synthetic_data` | `profile_id`, `rows`, `seed?`, `output_format` (`summary`\|`inline`), `inline_limit` | summary + artifact refs; inline rows capped |
 | `validate_synthetic_data` | `artifact_ref`, `profile_id` | metrics/violations, no source values |
 | `get_job_status` | `job_id` | status/progress/cancellable |
-| `cancel_job` | `job_id` | cancelled state |
+| `cancel_job` | `job_id` | signals a running job (`cancelling`) or reports it already finished |
 | `get_policy_summary` | `policy_id` | effective permissions + server ceiling |
+
+Every long-running tool (`profile_dataset`, `generate_synthetic_data`)
+records a job and returns its `job_id` in the envelope, so clients can
+poll `get_job_status` and call `cancel_job`. Cancellation is cooperative:
+the job stops between probes/rows, closes its cursor/connection, and the
+job record ends `cancelled` (SPEC 12.6).
 
 ### Explicitly excluded (SPEC 12.3)
 

@@ -403,8 +403,21 @@ def profile_run(
     max_rows: int | None = typer.Option(None, "--max-rows"),
     max_bytes: int | None = typer.Option(None, "--max-bytes"),
     max_runtime: float | None = typer.Option(None, "--max-runtime"),
+    max_cost: float | None = typer.Option(
+        None, "--max-cost", help="Provider cost budget (0 = none)"
+    ),
     sample_size: int = typer.Option(1000, "--sample-size"),
-    columns: Annotated[list[str], typer.Option("--column", help="Restrict to column")] = [],
+    columns: Annotated[
+        list[str], typer.Option("--column", "--columns", help="Restrict to column (repeatable)")
+    ] = [],
+    where: Annotated[
+        list[str],
+        typer.Option(
+            "--where",
+            help="Typed predicate col=value or col:op:value (op: = != < <= > >= like in); "
+            "never raw SQL",
+        ),
+    ] = [],
     sensitivity_scan: bool = typer.Option(True, "--sensitivity-scan/--no-sensitivity-scan"),
     allow_full_scan: bool = typer.Option(
         False, "--allow-full-scan", help="Explicitly allow expensive full scans"
@@ -416,8 +429,10 @@ def profile_run(
     verbose: VerboseOpt = False,
 ) -> None:
     """Run adaptive profiling under configured budgets."""
+    from qc.application.job_runner import JobRunner, run_job
     from qc.artifacts.profiles import save_profile
     from qc.domain.enums import Budget, OperationKind
+    from qc.domain.predicate import parse_predicates
     from qc.profiling.engine import Profiler, ProfileSettings
 
     opts = _opts(json_output, quiet, verbose, "text")
@@ -425,6 +440,7 @@ def profile_run(
     cfg = rt.source(source)
     engine = rt.engine(policy)
     ref = _parse_dataset_ref(cfg, dataset)
+    predicate = parse_predicates(where, set(columns) or None) if where else None
 
     settings = ProfileSettings(
         sample_size=sample_size,
@@ -434,10 +450,15 @@ def profile_run(
             max_rows=max_rows,
             max_bytes=max_bytes,
             max_runtime_seconds=max_runtime,
+            max_cost=max_cost,
         ),
         allow_full_scan=allow_full_scan,
         sensitivity_scan=sensitivity_scan,
+        predicate=predicate,
     )
+
+    runner = JobRunner(rt, kind="profile", source_id=cfg.id, dataset_id=dataset)
+    settings.cancel = runner.token
 
     async def _run() -> Any:
         connector = rt.connector_for(cfg)
@@ -447,51 +468,34 @@ def profile_run(
         finally:
             await connector.close()
 
-    # record job lifecycle (SPEC 15) — metadata only, no raw rows
-    from qc.domain.enums import JobStatus, utc_now
-    from qc.domain.models import JobRecord
+    def _install_cancel_handler() -> None:
+        import signal
 
-    job = JobRecord(kind="profile", source_id=cfg.id, dataset_id=dataset)
-    rt.state.upsert_job(job)
-    job.status = JobStatus.RUNNING
-    job.updated_at = utc_now()
-    job.message = "profiling"
-    rt.state.upsert_job(job)
-    try:
-        result = arun(_run())
-    except Exception as exc:
-        from qc.security.redaction import safe_error_message
+        def _handler(signum: int, frame: object) -> None:
+            runner.token.cancel("interrupted (SIGINT)")
 
-        job.status = JobStatus.FAILED
-        job.updated_at = utc_now()
-        job.message = safe_error_message(exc)[:200]
-        job.error_code = getattr(getattr(exc, "code", None), "value", None)
-        rt.state.upsert_job(job)
-        raise
+        # not in the main thread (e.g. tests) -> ValueError/RuntimeError
+        with contextlib.suppress(ValueError, OSError):
+            signal.signal(signal.SIGINT, _handler)
+
+    _install_cancel_handler()
+    outcome = arun(run_job(runner, _run, operation_kind=OperationKind.PROFILE))
+    result = outcome.result
     artifact = result.artifact
     out_path = Path(profile_output) if profile_output else rt.paths.profiles
     saved = save_profile(out_path, artifact)
     rt.state.index_profile(artifact, saved)
-    job.status = JobStatus.COMPLETED
-    job.updated_at = utc_now()
-    job.progress = 1.0
-    job.message = f"profile {artifact.profile_id}"
-    job.result_ref = str(saved)
-    rt.state.upsert_job(job)
-    rt.audit.record(
-        OperationKind.PROFILE,
-        source_id=cfg.id,
-        dataset_id=dataset,
-        policy_version=rt.load_policy_named(policy).version,
-        decision="allow",
-        rows_affected=result.budget_usage.rows,
-        duration_seconds=artifact.duration_seconds,
-        result_status="ok",
-        detail={"profile_id": artifact.profile_id, "queries": str(result.budget_usage.queries)},
-    )
+    runner.complete(result_ref=str(saved), message=f"profile {artifact.profile_id}")
+    from qc.observability.metrics import RECORDER
+
+    if result.metrics is not None:
+        RECORDER.record(result.metrics)
+    metrics_dict = result.metrics.as_dict() if result.metrics else {}
     emit(
         {
+            "job_id": runner.id,
             "profile_id": artifact.profile_id,
+            "metrics": metrics_dict,
             "path": str(saved),
             "row_count": artifact.row_count,
             "columns": len(artifact.columns),
@@ -837,6 +841,19 @@ def sanitize_export(
     output: Path = typer.Option(..., "--output", help="Output file path"),
     format: str = typer.Option("jsonl", "--format", help="jsonl|csv"),
     limit: int | None = typer.Option(None, "--limit"),
+    columns: Annotated[
+        list[str], typer.Option("--column", "--columns", help="Restrict output columns")
+    ] = [],
+    delimiter: str = typer.Option(",", "--delimiter", help="CSV field delimiter (single char)"),
+    header: bool = typer.Option(True, "--header/--no-header", help="CSV header row"),
+    protect_formulas: bool = typer.Option(
+        True,
+        "--protect-formulas/--no-protect-formulas",
+        help="Escape leading =,+,-,@ for spreadsheet safety",
+    ),
+    include_null_patterns: bool = typer.Option(
+        False, "--include-null-patterns", help="Include per-column null-pattern counts"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     manifest: bool = typer.Option(True, "--manifest/--no-manifest"),
     root: RootOpt = None,
@@ -850,6 +867,8 @@ def sanitize_export(
 
     opts = _opts(json_output, quiet, verbose, "text")
     rt = _runtime(root, config)
+    if format == "csv" and len(delimiter) != 1:
+        raise InvalidArgumentsError("--delimiter must be a single character")
     result = arun(
         export_rows(
             rt,
@@ -861,6 +880,12 @@ def sanitize_export(
             limit=limit,
             dry_run=dry_run,
             write_manifest=manifest,
+            columns=list(columns) or None,
+            csv_options={
+                "delimiter": delimiter,
+                "header": header,
+                "protect_formulas": protect_formulas,
+            },
         )
     )
     emit(
@@ -944,27 +969,36 @@ def generate_run(
 ) -> None:
     """Run a generation plan and write output + validation report."""
     from qc.application.generation import run_generation
+    from qc.application.job_runner import JobRunner
 
     opts = _opts(json_output, quiet, verbose, "text")
     rt = _runtime(root, config)
-    result = arun(
-        run_generation(
-            rt,
-            plan_file=Path(plan_file),
-            output=Path(output) if output else None,
-            report_path=Path(report) if report else None,
-            seed=seed,
-            strict=strict,
-            allow_fallbacks=allow_fallbacks,
+    runner = JobRunner(rt, kind="generate")
+    runner.start("generating")
+    try:
+        result = arun(
+            run_generation(
+                rt,
+                plan_file=Path(plan_file),
+                output=Path(output) if output else None,
+                report_path=Path(report) if report else None,
+                seed=seed,
+                strict=strict,
+                allow_fallbacks=allow_fallbacks,
+                cancel=runner.token,
+            )
         )
-    )
+    except BaseException as exc:
+        runner.fail(exc)
+        raise
     rep = result["report"]
+    runner.complete(result_ref=result["output"], message=f"generated {rep.rows_generated} rows")
     if result["ok"]:
         emit(
-            {"report": rep.json_safe(), "output": result["output"]},
+            {"job_id": runner.id, "report": rep.json_safe(), "output": result["output"]},
             opts=opts,
             text=(
-                f"generated {rep.rows_generated} row(s) -> {result['output']}\n"
+                f"generated {rep.rows_generated} row(s) -> {result['output']} (job {runner.id})\n"
                 f"hard failures: {len(rep.hard_failures)} | "
                 f"soft deviations: {len(rep.soft_failures)}\n"
                 f"warnings: {'; '.join(rep.warnings[:2])}"

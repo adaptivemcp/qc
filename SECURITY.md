@@ -58,6 +58,13 @@ are checked independently on every operation.
   rejected; only `SELECT`/`WITH` statements reach any wire (Python-side
   assertion for DB connectors, protocol-side assertion for the JDBC
   bridge); all values are bound as query parameters.
+- **Predicates:** `--where` is a typed interface (`col=value`,
+  `col:op:value`); SQL fragments are rejected before any query is
+  composed, and predicate columns are validated + quoted (SPEC 11.2).
+- **Cancellation & retries:** cooperative cancellation closes
+  cursors/connections and is never swallowed; only idempotent reads are
+  retried, only on transient failures, bounded by attempts and deadline
+  (SPEC 4.3, 6.1).
 - **CSV formula injection:** cells starting `=`, `+`, `-`, `@`, tab, or
   CR are prefixed with `'` in safe-export mode; the manifest records
   that protection was applied.

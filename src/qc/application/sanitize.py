@@ -113,7 +113,7 @@ async def preview_rows(
         result_status="ok",
         detail={"dry_run": str(dry_run)},
     )
-    return {
+    result: dict[str, Any] = {
         "policy": policy_name,
         "dataset": dataset,
         "rows": transformed,
@@ -128,6 +128,38 @@ async def preview_rows(
             else []
         ),
     }
+    if include_null_patterns:
+        # disclose only *counts* of null-like representations, never values
+        result["null_patterns"] = _null_patterns(raw_rows, all_cols)
+    return result
+
+
+def _null_patterns(rows: list[dict[str, Any]], columns: list[str]) -> dict[str, dict[str, int]]:
+    """Per-column counts of distinct null-like representations (SPEC 7.5/11.2)."""
+    out: dict[str, dict[str, int]] = {}
+    for col in columns:
+        counts = {
+            "sql_null": 0,
+            "empty_string": 0,
+            "whitespace_only": 0,
+            "string_null": 0,
+            "literal_na": 0,
+        }
+        for row in rows:
+            v = row.get(col)
+            if v is None:
+                counts["sql_null"] += 1
+            elif isinstance(v, str):
+                if v == "":
+                    counts["empty_string"] += 1
+                elif v.strip() == "":
+                    counts["whitespace_only"] += 1
+                elif v.strip().lower() in ("null", "none", "nil"):
+                    counts["string_null"] += 1
+                elif v.strip().lower() in ("n/a", "na", "unknown"):
+                    counts["literal_na"] += 1
+        out[col] = counts
+    return out
 
 
 async def export_rows(
@@ -141,8 +173,15 @@ async def export_rows(
     limit: int | None = None,
     dry_run: bool = False,
     write_manifest: bool = True,
+    columns: list[str] | None = None,
+    csv_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Sanitized export with manifest (SPEC 10.1, 10.2)."""
+    """Sanitized export with manifest (SPEC 10.1, 10.2).
+
+    ``csv_options`` forwards delimiter / header / quoting / protect-formula
+    settings to the CSV writer; the manifest records them so null encoding
+    and escaping transformations are auditable.
+    """
     engine = rt.engine(policy_name)
     ctx = DecisionContext(source=source, dataset=dataset)
     engine.require(Operation.EXPORT, ctx)
@@ -163,17 +202,21 @@ async def export_rows(
         dataset=dataset,
         policy_name=policy_name,
         limit=effective_limit,
+        columns=columns,
         dry_run=dry_run,
         inline=False,
     )
     rows: list[dict[str, Any]] = result["rows"]
+    if columns:
+        rows = [{k: v for k, v in r.items() if k in set(columns)} for r in rows]
+    csv_opts = dict(csv_options or {})
     manifest_path = None
     if not dry_run:
         output.parent.mkdir(parents=True, exist_ok=True)
         if fmt == "jsonl":
             _write_jsonl(output, rows)
         else:
-            _write_csv(output, rows)
+            _write_csv(output, rows, **csv_opts)
         if write_manifest:
             manifest_path = _write_manifest(
                 output,
@@ -183,6 +226,7 @@ async def export_rows(
                 fmt=fmt,
                 rows=len(rows),
                 blocked=result["blocked"],
+                csv_options=csv_opts,
             )
         rt.audit.record(
             OperationKind.SANITIZE_EXPORT,
@@ -215,16 +259,16 @@ def _ref(cfg: Any, dataset: str):  # type: ignore[no-untyped-def]
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    from qc.exports.jsonl import write_jsonl
+
+    write_jsonl(path, rows)
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+def _write_csv(path: Path, rows: list[dict[str, Any]], **options: Any) -> None:
     """CSV export with null encoding + formula-injection protection (SPEC 10.2)."""
     from qc.exports.csv_writer import write_csv_rows
 
-    write_csv_rows(path, rows)
+    write_csv_rows(path, rows, **options)
 
 
 def _write_manifest(
@@ -236,10 +280,12 @@ def _write_manifest(
     fmt: str,
     rows: int,
     blocked: list[str],
+    csv_options: dict[str, Any] | None = None,
 ) -> Path:
     from qc import TOOL_VERSION
 
-    manifest = {
+    opts = csv_options or {}
+    manifest: dict[str, Any] = {
         "manifest_version": 1,
         "tool_version": TOOL_VERSION,
         "output": path.name,
@@ -252,10 +298,21 @@ def _write_manifest(
         "null_encoding": (
             "\\N marks null; empty string stays empty" if fmt == "csv" else "json null"
         ),
-        "formula_injection_protection": fmt == "csv",
+        "decimal_encoding": (
+            "csv:text" if fmt == "csv" else "json:number when exact round-trip else string"
+        ),
+        "formula_injection_protection": (
+            bool(opts.get("protect_formulas", True)) if fmt == "csv" else False
+        ),
         "contains_raw_samples": False,
         "secrets": "none",
     }
+    if fmt == "csv":
+        manifest["csv"] = {
+            "delimiter": opts.get("delimiter", ","),
+            "header": bool(opts.get("header", True)),
+            "protect_formulas": bool(opts.get("protect_formulas", True)),
+        }
     mpath = path.with_suffix(path.suffix + ".manifest.json")
     mpath.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     return mpath

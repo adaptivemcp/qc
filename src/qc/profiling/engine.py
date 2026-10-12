@@ -18,6 +18,7 @@ from typing import Any
 
 from qc import TOOL_VERSION
 from qc.connectors.base import DataConnector, ProfileQuery, SampleRequest
+from qc.domain.cancellation import CancellationToken
 from qc.domain.enums import (
     Budget,
     BudgetUsage,
@@ -26,7 +27,12 @@ from qc.domain.enums import (
     Measurement,
     SamplingMethod,
 )
-from qc.domain.errors import BudgetExceededError, QCError
+from qc.domain.errors import (
+    BudgetExceededError,
+    CancelledError,
+    InvalidArgumentsError,
+    QCError,
+)
 from qc.domain.models import (
     PROFILE_ALGORITHM_VERSION,
     CategorySummary,
@@ -44,6 +50,7 @@ from qc.domain.models import (
     TemporalSummary,
 )
 from qc.observability.logging import get_logger
+from qc.observability.metrics import OperationMetrics
 from qc.profiling.falsy import analyze_falsy
 from qc.profiling.relationships import discover_relationships
 from qc.profiling.type_inference import detect_format_patterns, infer_logical_type
@@ -80,6 +87,10 @@ class ProfileSettings:
     top_k: int = 10
     rare_category_min: int = 5
     detector_config: DetectorConfig | None = None
+    #: cooperative cancellation signal (SPEC 4.3); checked between probes
+    cancel: CancellationToken | None = None
+    #: optional typed predicate restricting every probe (SPEC 11.2)
+    predicate: dict[str, Any] | None = None
 
 
 @dataclass
@@ -87,6 +98,7 @@ class ProfileResult:
     artifact: ProfileArtifact
     decisions: list[ProbeDecision] = field(default_factory=list)
     budget_usage: BudgetUsage = field(default_factory=BudgetUsage)
+    metrics: OperationMetrics | None = None
 
 
 class Profiler:
@@ -102,6 +114,10 @@ class Profiler:
         self.connector = connector
         self.policy = policy
         self.ceiling = ceiling or Ceiling()
+        self.metrics = OperationMetrics(operation="profile")
+        # expose cancellation to inner connector fetches (SPEC 6.1)
+        if hasattr(connector, "cancel"):
+            connector.cancel = None
 
     async def profile(
         self,
@@ -122,6 +138,8 @@ class Profiler:
 
         # ---- Stage 1: preflight ------------------------------------------------
         self.policy.require(Operation.PROFILE_RUN, ctx)
+        if hasattr(self.connector, "cancel"):
+            self.connector.cancel = settings.cancel
 
         max_rows, max_bytes, max_runtime, max_queries = self.policy.effective_budget(
             settings.budget.max_rows
@@ -147,17 +165,30 @@ class Profiler:
         decisions: list[ProbeDecision] = []
         deadline = time.monotonic() + (effective.max_runtime_seconds or max_runtime)
 
+        if settings.predicate is not None and not isinstance(settings.predicate, dict):
+            raise InvalidArgumentsError("predicate must be a typed mapping")
+
+        def check_cancel() -> None:
+            if settings.cancel is not None:
+                settings.cancel.raise_if_cancelled()
+
         async def run_query(query: ProfileQuery, probe: str, column: str | None) -> Any:
-            """Gate a probe behind budget + privacy checks, record decision."""
+            """Gate a probe behind cancel + budget + privacy checks."""
+            check_cancel()
             est_rows = query.estimated_rows or 0
             est_bytes = query.estimated_bytes or 0
+            if settings.predicate is not None:
+                # the typed predicate narrows every aggregate/sample query
+                query.params.setdefault("predicate", settings.predicate)
             if query.needs_full_scan and not settings.allow_full_scan:
+                self.metrics.budget_rejections += 1
                 decisions.append(ProbeDecision(probe, column, False, 0.0, "full_scan_not_allowed"))
                 raise BudgetExceededError(
                     f"probe '{probe}' needs a full scan; pass --allow-full-scan",
                     dimension="full_scan",
                 )
             if usage.would_exceed(effective, queries=1, rows=est_rows, byte_count=est_bytes):
+                self.metrics.budget_rejections += 1
                 decisions.append(ProbeDecision(probe, column, False, 0.0, "budget_gate"))
                 raise BudgetExceededError(f"budget exhausted before '{probe}'", dimension="budget")
             if time.monotonic() > deadline:
@@ -170,11 +201,16 @@ class Profiler:
                 byte_count=result.bytes_returned,
                 runtime=result.duration_seconds,
             )
+            self.metrics.queries += 1
+            self.metrics.rows_returned += result.rows_returned
+            self.metrics.bytes_processed += result.bytes_returned
             return result
 
         # ---- Stage 2: metadata -------------------------------------------------
         try:
             schema = await self.connector.get_schema(source, dataset)
+        except CancelledError:
+            raise
         except QCError:
             raise
         decisions.append(ProbeDecision("metadata", None, True, 1.0, "stage_2_fixed"))
@@ -245,8 +281,11 @@ class Profiler:
                         limit=sample_size,
                         columns=[c.name for c in columns],
                         method="stable_key",
+                        predicate=settings.predicate,
+                        cancel=settings.cancel,
                     )
                     async for row in self.connector.sample_rows(source, request):
+                        check_cancel()
                         sampled_rows.append(row.values)
                         if len(sampled_rows) >= sample_size:
                             break
@@ -268,6 +307,8 @@ class Profiler:
                     sampling_limitation = (
                         "sample-based analysis: rare events may be absent from the sample"
                     )
+                except CancelledError:
+                    raise
                 except QCError as exc:
                     warnings.append(f"sampling failed: {exc.message}")
                     incomplete.append("sampling")
@@ -275,6 +316,7 @@ class Profiler:
         # ---- Stages 5-6: pattern inference + edge-case probes per column -------
         known_sensitive = self.connector.capabilities.supports("statistics")
         for col in columns:
+            check_cancel()
             profile = await self._profile_column(
                 col=col,
                 source=source,
@@ -380,7 +422,15 @@ class Profiler:
                 },
             },
         )
-        return ProfileResult(artifact=profile_id_artifact, decisions=decisions, budget_usage=usage)
+        self.metrics.rows_scanned += usage.rows
+        self.metrics.retries += int(getattr(self.connector, "retry_count", 0))
+        self.metrics.connector_health[self.connector.name] = True
+        return ProfileResult(
+            artifact=profile_id_artifact,
+            decisions=decisions,
+            budget_usage=usage,
+            metrics=self.metrics.stop(),
+        )
 
     # ------------------------------------------------------------------ column
 
@@ -430,6 +480,8 @@ class Profiler:
             decisions.append(ProbeDecision("null_count", name, True, 1.0, "cheap_aggregate"))
         except BudgetExceededError:
             incomplete.append(f"null_count:{name}")
+        except CancelledError:
+            raise
         except QCError:
             incomplete.append(f"null_count:{name}")
 
@@ -487,6 +539,8 @@ class Profiler:
             decisions.append(ProbeDecision("distinct", name, True, 1.0, "cheap_aggregate"))
         except BudgetExceededError:
             incomplete.append(f"distinct:{name}")
+        except CancelledError:
+            raise
         except QCError:
             incomplete.append(f"distinct:{name}")
 
@@ -519,6 +573,8 @@ class Profiler:
                     quantiles={k: res.data[k] for k in ("p50", "p90") if k in res.data},
                     measurement=Measurement.EXACT if observed_exact else Measurement.ESTIMATED,
                 )
+            except CancelledError:
+                raise
             except QCError:
                 incomplete.append(f"length:{name}")
 
@@ -541,6 +597,8 @@ class Profiler:
                     maximum=res.data.get("max"),
                     measurement=Measurement.EXACT if observed_exact else Measurement.ESTIMATED,
                 )
+            except CancelledError:
+                raise
             except QCError:
                 incomplete.append(f"numeric:{name}")
 
@@ -573,6 +631,8 @@ class Profiler:
                     maximum=_parse(res.data.get("max_str")),
                     measurement=Measurement.EXACT if observed_exact else Measurement.ESTIMATED,
                 )
+            except CancelledError:
+                raise
             except QCError:
                 incomplete.append(f"temporal:{name}")
 
@@ -631,6 +691,8 @@ class Profiler:
                         )
                     )
                 decisions.append(ProbeDecision("top_k", name, True, 0.8, "cheap_aggregate"))
+            except CancelledError:
+                raise
             except QCError:
                 incomplete.append(f"top_k:{name}")
 

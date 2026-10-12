@@ -49,7 +49,7 @@ Set per-run with `qc profile run`:
 ```bash
 qc profile run analytics public.orders \
   --max-queries 40 --max-rows 50000 --max-bytes 8388608 \
-  --max-runtime 60 --sample-size 2000
+  --max-runtime 60 --max-cost 5.0 --sample-size 2000
 ```
 
 The effective budget is `min(user value, policy budget, server ceiling)`.
@@ -60,6 +60,42 @@ with exit code 5 only if *no* evidence could be collected.
 
 `--allow-full-scan` is required for probes that must read every row, and
 is denied unless the policy sets `budget.allow_full_scan: true`.
+
+## Filtered profiles with `--where`
+
+Restrict the profiled population with a **typed predicate** — never raw
+SQL (SPEC 11.2). Forms:
+
+```
+--where column=value          equality
+--where column:op:value       op ∈ {=, !=, <, <=, >, >=, like, in}
+--where region:in:US,EU       membership
+--where age:>=:18             ordering
+```
+
+Values are coerced to int/float/bool/null where unambiguous; string
+values stay strings. Multiple `--where` flags combine with AND. The
+predicate is validated, its column quoted, and its values bound as query
+parameters in every aggregate and sample — SQL fragments (`;`, quotes,
+comments) are rejected with exit code 2. A filtered profile's row count
+and all aggregates are computed over the filtered set.
+
+```bash
+qc profile run analytics public.orders --where region=US --where age:>=:18
+```
+
+## Cancellation
+
+Profiling is cancellable (SPEC 4.3, 6.1, 12.6):
+
+- **CLI:** `Ctrl-C` cancels cooperatively; the connector closes its
+  cursor/connection and the profile exits with code 5. Completed evidence
+  is discarded and the job is marked `cancelled`.
+- **MCP:** `cancel_job` signals the running job; it reports `cancelling`
+  when the work was still in flight, else the terminal status.
+- Cancellation is checked before each probe, per column, and between
+  fetched/sampled batches. It is never swallowed by error handling.
+
 
 ## Sampling and its limitations
 

@@ -116,6 +116,53 @@ class TestJourneyProfile:
         proc = run_qc(project, "profile", "run", "demo", "people.jsonl", expect=4)
         assert "POLICY_DENIED" in proc.stderr
 
+    def test_profile_with_typed_where(self, project: Path) -> None:
+        run_qc(project, "policy", "grant", "strict-local", "demo", "--dataset", "people.jsonl")
+        # typed predicate filters the profiled population (no raw SQL)
+        out = run_qc(
+            project,
+            "profile",
+            "run",
+            "demo",
+            "people.jsonl",
+            "--where",
+            "country=US",
+            "--json",
+        )
+        payload = json.loads(out.stdout)
+        assert payload["row_count"] == 4  # US rows in the fixture
+        assert payload["job_id"].startswith("job_")
+
+    def test_profile_rejects_raw_sql_where(self, project: Path) -> None:
+        run_qc(project, "policy", "grant", "strict-local", "demo", "--dataset", "people.jsonl")
+        proc = run_qc(
+            project,
+            "profile",
+            "run",
+            "demo",
+            "people.jsonl",
+            "--where",
+            "country=US; DROP TABLE x",
+            expect=2,
+        )
+        assert "illegal" in proc.stderr.lower() or "predicate" in proc.stderr.lower()
+
+    def test_profile_with_ordering_where(self, project: Path) -> None:
+        run_qc(project, "policy", "grant", "strict-local", "demo", "--dataset", "people.jsonl")
+        out = run_qc(
+            project,
+            "profile",
+            "run",
+            "demo",
+            "people.jsonl",
+            "--where",
+            "age:>=:30",
+            "--json",
+        )
+        payload = json.loads(out.stdout)
+        # ages 34 and 41 are >= 30
+        assert payload["row_count"] == 2
+
     def test_profile_diff(self, project: Path) -> None:
         run_qc(project, "policy", "grant", "strict-local", "demo", "--dataset", "people.jsonl")
         run_qc(project, "profile", "run", "demo", "people.jsonl")

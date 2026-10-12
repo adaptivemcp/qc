@@ -18,15 +18,17 @@ from qc.connectors.base import (
     ProfileQueryResult,
     SampleRequest,
 )
+from qc.connectors.resilience import RetryPolicy, with_retry
 from qc.connectors.sql_common import (
     assert_not_dangerous_sql,
+    build_where,
     map_db_error,
     quote_ident,
     safety_check_dataset,
     split_qualified,
 )
 from qc.domain.enums import DatasetKind, LogicalType, Measurement
-from qc.domain.errors import NotFoundError, SourceError, UnsupportedError
+from qc.domain.errors import CancelledError, NotFoundError, SourceError, UnsupportedError
 from qc.domain.models import (
     ColumnSchema,
     ConnectionTest,
@@ -37,6 +39,7 @@ from qc.domain.models import (
     SizeEstimate,
     SourceConfig,
 )
+from qc.observability.logging import get_logger
 from qc.security.secrets import resolve_secret
 
 _MYSQL_LOGICAL: dict[str, LogicalType] = {
@@ -89,9 +92,10 @@ class MySQLConnector(BaseConnector):
         named=("metadata", "aggregates", "sampling", "cancellation"),
     )
 
-    def __init__(self, *, connect_timeout: int = 10) -> None:
+    def __init__(self, *, connect_timeout: int = 10, retry: RetryPolicy | None = None) -> None:
         super().__init__()
         self.connect_timeout = connect_timeout
+        self.retry = retry or RetryPolicy(attempts=3, base_delay=0.2, max_delay=5.0)
         self._conn: Any = None
         self._dsn: str | None = None
 
@@ -138,13 +142,24 @@ class MySQLConnector(BaseConnector):
         self, config: SourceConfig, sql: str, params: tuple[Any, ...] = ()
     ) -> list[tuple[Any, ...]]:
         assert_not_dangerous_sql(sql)
-        conn = await self._connect(config)
-        try:
+
+        async def attempt() -> list[tuple[Any, ...]]:
+            conn = await self._connect(config)
             cur = conn.cursor()
             cur.execute(sql, params)
             rows = cur.fetchall()
             cur.close()
             return list(rows)
+
+        def on_retry(attempt_no: int, exc: BaseException) -> None:
+            self.retry_count += 1
+            log.info(
+                "transient query failure; retrying",
+                fields={"error_code": "RETRY", "detail": type(exc).__name__},
+            )
+
+        try:
+            return await with_retry(attempt, self.retry, cancel=self.cancel, on_retry=on_retry)
         except Exception as exc:
             raise map_db_error(exc, connector=self.name) from exc
 
@@ -326,16 +341,22 @@ class MySQLConnector(BaseConnector):
         col_sql = quote_ident(str(col), "backtick") if col else None
         kind = query.kind
         started = time.monotonic()
+        where_sql, where_params = build_where(
+            query.params.get("predicate"), quote=lambda c: quote_ident(c, "backtick")
+        )
+        wparams: tuple[Any, ...] = tuple(where_params)
 
         if kind == "row_count":
-            rows = await self._fetch(config, f"SELECT count(*) FROM {qual}")
+            rows = await self._fetch(config, f"SELECT count(*) FROM {qual}{where_sql}", wparams)
             return _result(kind, {"row_count": int(rows[0][0])}, started)
 
         if kind == "null_count":
             _need(col_sql)
             rows = await self._fetch(
                 config,
-                f"SELECT count(*), SUM(CASE WHEN {col_sql} IS NULL THEN 1 ELSE 0 END) FROM {qual}",
+                f"SELECT count(*), SUM(CASE WHEN {col_sql} IS NULL THEN 1 ELSE 0 END) "
+                f"FROM {qual}{where_sql}",
+                wparams,
             )
             return _result(
                 kind,
@@ -348,7 +369,8 @@ class MySQLConnector(BaseConnector):
             rows = await self._fetch(
                 config,
                 f"SELECT COUNT(DISTINCT {col_sql}), "
-                f"SUM(CASE WHEN {col_sql} IS NULL THEN 1 ELSE 0 END) FROM {qual}",
+                f"SUM(CASE WHEN {col_sql} IS NULL THEN 1 ELSE 0 END) FROM {qual}{where_sql}",
+                wparams,
             )
             return _result(
                 kind,
@@ -358,7 +380,9 @@ class MySQLConnector(BaseConnector):
 
         if kind == "min_max":
             _need(col_sql)
-            rows = await self._fetch(config, f"SELECT MIN({col_sql}), MAX({col_sql}) FROM {qual}")
+            rows = await self._fetch(
+                config, f"SELECT MIN({col_sql}), MAX({col_sql}) FROM {qual}{where_sql}", wparams
+            )
             lo, hi = rows[0]
             data: dict[str, Any] = {}
             if lo is not None:
@@ -370,19 +394,21 @@ class MySQLConnector(BaseConnector):
             k = int(query.params.get("k", 10))
             rows = await self._fetch(
                 config,
-                f"SELECT {col_sql} AS v, COUNT(*) AS c FROM {qual} "
+                f"SELECT {col_sql} AS v, COUNT(*) AS c FROM {qual}{where_sql} "
                 f"GROUP BY v ORDER BY c DESC LIMIT %s",
-                (k,),
+                (*wparams, k),
             )
             categories = [{"key": str(v), "count": int(c), "falsy": v is None} for v, c in rows]
             return _result(kind, {"categories": categories}, started, rows_returned=len(rows))
 
         if kind == "length_stats":
             _need(col_sql)
+            extra = f" AND {where_sql.strip()[6:]}" if where_sql else ""
             rows = await self._fetch(
                 config,
                 f"SELECT MIN(CHAR_LENGTH({col_sql})), MAX(CHAR_LENGTH({col_sql})) "
-                f"FROM {qual} WHERE {col_sql} IS NOT NULL",
+                f"FROM {qual} WHERE {col_sql} IS NOT NULL{extra}",
+                wparams,
             )
             lo, hi = rows[0]
             data = {"min": int(lo), "max": int(hi)} if lo is not None else {}
@@ -390,21 +416,22 @@ class MySQLConnector(BaseConnector):
             if lo is not None:
                 total_rows = await self._fetch(
                     config,
-                    f"SELECT COUNT(*) FROM {qual} WHERE {col_sql} IS NOT NULL",
+                    f"SELECT COUNT(*) FROM {qual} WHERE {col_sql} IS NOT NULL{extra}",
+                    wparams,
                 )
                 total = int(total_rows[0][0])
                 if total:
                     p50_rows = await self._fetch(
                         config,
                         f"SELECT CHAR_LENGTH({col_sql}) FROM {qual} "
-                        f"WHERE {col_sql} IS NOT NULL ORDER BY 1 LIMIT 1 OFFSET %s",
-                        (total // 2,),
+                        f"WHERE {col_sql} IS NOT NULL{extra} ORDER BY 1 LIMIT 1 OFFSET %s",
+                        (*wparams, total // 2),
                     )
                     p90_rows = await self._fetch(
                         config,
                         f"SELECT CHAR_LENGTH({col_sql}) FROM {qual} "
-                        f"WHERE {col_sql} IS NOT NULL ORDER BY 1 LIMIT 1 OFFSET %s",
-                        (int(total * 0.9),),
+                        f"WHERE {col_sql} IS NOT NULL{extra} ORDER BY 1 LIMIT 1 OFFSET %s",
+                        (*wparams, int(total * 0.9)),
                     )
                     if p50_rows:
                         data["p50"] = int(p50_rows[0][0])
@@ -414,7 +441,7 @@ class MySQLConnector(BaseConnector):
 
         if kind == "full_scan_values":
             _need(col_sql)
-            rows = await self._fetch(config, f"SELECT {col_sql} FROM {qual}")
+            rows = await self._fetch(config, f"SELECT {col_sql} FROM {qual}{where_sql}", wparams)
             return _result(kind, {"values": [r[0] for r in rows]}, started, rows_returned=len(rows))
 
         raise UnsupportedError(f"unsupported profile query kind: {kind}")
@@ -432,25 +459,21 @@ class MySQLConnector(BaseConnector):
             if request.columns
             else "*"
         )
+        where_sql, where_params = build_where(
+            request.predicate, quote=lambda c: quote_ident(c, "backtick")
+        )
         if request.method == "random":
-            sql = f"SELECT {cols_sql} FROM {qual} ORDER BY RAND() LIMIT %s"
-            params: tuple[Any, ...] = (request.limit,)
-        elif request.method == "predicate" and request.predicate:
-            col, value = _safe_predicate(request.predicate)
-            sql = (
-                f"SELECT {cols_sql} FROM {qual} WHERE {quote_ident(col, 'backtick')} = %s "
-                "ORDER BY 1 LIMIT %s"
-            )
-            params = (value, request.limit)
+            sql = f"SELECT {cols_sql} FROM {qual}{where_sql} ORDER BY RAND() LIMIT %s"
+            params: tuple[Any, ...] = (*where_params, request.limit)
         else:
             if not request.columns:
                 raise UnsupportedError("stable-key sampling requires a deterministic order column")
             sql = (
-                f"SELECT {cols_sql} FROM {qual} "
+                f"SELECT {cols_sql} FROM {qual}{where_sql} "
                 f"ORDER BY {quote_ident(request.columns[0], 'backtick')} "
                 "LIMIT %s OFFSET %s"
             )
-            params = (request.limit, request.offset)
+            params = (*where_params, request.limit, request.offset)
 
         assert_not_dangerous_sql(sql)
         conn = await self._connect(config)
@@ -459,12 +482,18 @@ class MySQLConnector(BaseConnector):
             cur.execute(sql, params)
             names = [d[0] for d in cur.description] if cur.description else []
             while True:
+                if request.cancel is not None and request.cancel.cancelled:
+                    with contextlib.suppress(Exception):
+                        cur.close()
+                    request.cancel.raise_if_cancelled()
                 batch = cur.fetchmany(200)
                 if not batch:
                     break
                 for rec in batch:
                     yield EphemeralRow(values=dict(zip(names, rec, strict=False)))
             cur.close()
+        except CancelledError:
+            raise
         except Exception as exc:
             raise map_db_error(exc, connector=self.name) from exc
 
@@ -538,3 +567,6 @@ def _fingerprint(ns: str, name: str, columns: list[str]) -> str:
     h = hashlib.sha256()
     h.update(f"my|{ns}|{name}|{','.join(columns)}".encode())
     return f"my_{h.hexdigest()[:24]}"
+
+
+log = get_logger("mysql")
