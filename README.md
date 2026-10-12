@@ -79,6 +79,207 @@ qc source add demo --type fixture \
   --connection-ref env:QC_FIXTURE_ROOT --dataset people.jsonl
 ```
 
+The Quickstart uses `env:PG_DSN` for brevity. Before wiring a **real**
+database, read [Credentials](#credentials) — it covers the OS keyring on
+Linux, macOS, and Windows, and how to confirm nothing leaked to disk.
+
+## Credentials
+
+QC never stores credentials. `qc.toml`, `sources.json`, and policies hold a
+**reference** only; the value is resolved in-process at connect time and is
+never written to artifacts, logs, audit entries, or error messages.
+
+| Scheme | Secret lives in | Use for |
+|---|---|---|
+| `cmd:<helper>` | OS keyring / credential manager, read by a script | **interactive work — start here** |
+| `file:/path` | a file you protect (`chmod 600`, or NTFS ACL) | servers, containers, CI images |
+| `keyring:service/account` | OS store via the `keyring` package | shorthand, once installed |
+| `env:VAR` | process environment | supervised environments only |
+
+Prefer `cmd:` when *you* are typing the command. `env:` leaves the value in
+the process environment where `env`, `ps -e`, and every child process can
+read it — correct when a supervisor injects it, wrong when you type it.
+
+### How `cmd:` behaves
+
+`cmd:` runs a fixed argument vector with **no shell**, and splits arguments
+on whitespace. Two consequences worth knowing before you write a helper:
+
+- `;`, `|`, `&&`, and `$(...)` are passed through literally, never
+  interpreted — so a helper reference cannot be turned into a shell command.
+- **A path containing a space cannot be used.** There is no quoting.
+  Keep helper paths space-free: `~/.config/qc-secrets/…`, `C:\qc-secrets\…`.
+
+Because only *attribute names* appear on the command line, the password
+never reaches shell history or `ps` output.
+
+### Linux — GNOME Keyring / KWallet
+
+```bash
+# 1. store — prompted, so the password never enters shell history
+read -rsp "DB password: " PW && echo "$PW" \
+  | secret-tool store --label="QC postgres analytics" service qc account analytics
+unset PW
+
+# 2. helper — prints the password and nothing else
+mkdir -p ~/.config/qc-secrets
+printf '%s\n' '#!/bin/sh' \
+  'exec secret-tool lookup service qc account analytics' \
+  > ~/.config/qc-secrets/pg-analytics.sh
+chmod 700 ~/.config/qc-secrets/pg-analytics.sh
+
+# 3. reference it
+qc source add analytics --type postgres \
+  --connection-ref "cmd:$HOME/.config/qc-secrets/pg-analytics.sh"
+```
+
+`secret-tool` talks to a running D-Bus session keyring. From a bare SSH
+session or a systemd unit there may be no unlocked keyring — unlock it, or
+run the command under `dbus-run-session`. `pass` works the same way if you
+prefer it: use `-- gpg -dq ~/.password-store/qc-analytics.gpg` as the helper
+body.
+
+### macOS — Keychain
+
+> Not yet run on this machine — please confirm and send feedback.
+
+```bash
+# 1. store (-w with no value prompts, so nothing lands in history)
+security add-generic-password -a analytics -s qc -U -w
+
+# 2. helper — -w prints the password alone, without the `password: "…"` header
+mkdir -p ~/.config/qc-secrets
+printf '%s\n' '#!/bin/sh' \
+  'exec /usr/bin/security find-generic-password -w -a analytics -s qc' \
+  > ~/.config/qc-secrets/pg-analytics.sh
+chmod 700 ~/.config/qc-secrets/pg-analytics.sh
+
+# 3. reference it
+qc source add analytics --type postgres \
+  --connection-ref "cmd:$HOME/.config/qc-secrets/pg-analytics.sh"
+```
+
+macOS may show a one-time GUI prompt the first time a script reads an item.
+If the lookup fails silently instead, the item's ACL does not trust the
+reader; `security unlock-keychain` also clears a locked login keychain.
+
+### Windows — DPAPI
+
+> Not yet run on this machine — please confirm and send feedback.
+
+Windows has no `chmod`; access is governed by NTFS ACLs. The portable
+choice is a **DPAPI-encrypted** file, which only your Windows account on
+that machine can decrypt.
+
+```powershell
+$dir = "$env:USERPROFILE\qc-secrets"
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+
+# 1. store — prompts securely, then encrypts with your user key
+Read-Host "DB password" -AsSecureString |
+  ConvertFrom-SecureString |
+  Set-Content "$dir\pg-analytics.txt"
+
+# 2. read helper
+@'
+$sec = Get-Content "$PSScriptRoot\pg-analytics.txt" | ConvertTo-SecureString
+$bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+try { [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+'@ | Set-Content "$dir\read-pg-analytics.ps1"
+
+# 3. thin .cmd wrapper (QC runs this directly, no shell)
+@'
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0read-pg-analytics.ps1"
+'@ | Set-Content "$dir\get-pg-analytics.cmd" -Encoding ascii
+
+# 4. reference it — forward slashes, and no spaces in the path
+qc source add analytics --type postgres `
+  --connection-ref "cmd:C:/Users/$env:USERNAME/qc-secrets/get-pg-analytics.cmd"
+```
+
+If your profile path contains a space (`C:\Users\First Last\…`), move the
+folder to `C:\qc-secrets\` — `cmd:` cannot quote it.
+
+### Shorthand with `keyring:`
+
+Works across all three platforms once installed — Credential Manager on
+Windows, Keychain on macOS, Secret Service on Linux (which needs a Secret
+Service backend present):
+
+```bash
+uv add keyring
+qc source add analytics --type postgres --connection-ref keyring:qc/analytics
+```
+
+### Fallback — a protected file
+
+```bash
+mkdir -p ~/.config/qc && umask 077
+printf '%s\n' 'postgres://user:pw@host:5432/db' > ~/.config/qc/analytics.dsn
+chmod 600 ~/.config/qc/analytics.dsn
+qc source add analytics --type postgres --connection-ref file:~/.config/qc/analytics.dsn
+```
+
+Keep it **outside the repository**, so a future `.gitignore` mistake cannot
+expose it. (`file:` needs no extra dependency and works on Windows, where
+NTFS ACLs stand in for POSIX modes.)
+
+> The permission check runs when the secret is first **resolved**, not when
+> the source is registered. A `chmod 644` file is accepted by
+> `qc source add` and fails later, at connect time, with
+> `secret file … is readable by group/others`. Set the mode up front.
+
+### Verify before you trust it
+
+```bash
+qc source list                  # cmd:***   — scheme only, never the helper path or value
+qc source inspect analytics     # "connection_ref": "cmd:***"
+
+# confirm the password reached no file on disk (prints names only, not the value)
+read -rsp "Password: " PW
+hits=0
+for d in workbench "$HOME/.local/share/qc"; do
+  if [ -d "$d" ]; then
+    grep -rIl -- "$PW" "$d" && hits=1
+  else
+    echo "skip (not present): $d"
+  fi
+done
+[ "$hits" = 0 ] && echo "no leak"
+unset PW
+```
+
+Run it from the directory holding your QC project. Missing directories are
+reported rather than silently counted as clean — `grep` exits non-zero on
+a missing path just as it does on no-match, which would otherwise print a
+misleading "no leak".
+
+A failing connection is the other leak-prone path, since driver exceptions
+often embed the DSN. QC strips them, so only host/port should appear:
+
+```bash
+qc source test analytics
+# error [INTERNAL]: SourceError: OperationalError: connection failed:
+#   connection to server at "10.0.0.5", port 5432 failed …
+```
+
+### Troubleshooting
+
+| Symptom | Cause |
+|---|---|
+| `secret file … is readable by group/others` | mode too open — `chmod 600` |
+| `secret file not found` | bad path, or `~` not expanded |
+| `secret helper failed to run` | helper path has a space, or is not executable (`chmod 700`) |
+| `secret helper exited with N` | helper failed; run it by hand to see why |
+| `secret helper produced no output` | empty store entry, or the keyring locked |
+| `keyring support not installed` | `uv add keyring` |
+| `environment variable … is not set` | `env:` reference with the variable unset |
+
+Finally, connect with a **least-privilege read-only account**. QC opens
+read-only sessions, but the account's grants are the real boundary.
+
 ## MCP
 
 ```bash

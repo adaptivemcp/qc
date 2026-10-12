@@ -16,3 +16,4 @@ reports/
 output/
 state.db
 *.local.*
+workbench/
