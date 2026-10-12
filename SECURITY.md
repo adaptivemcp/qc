@@ -78,9 +78,12 @@ are checked independently on every operation.
 
 ## Secret management
 
-- `connection_ref` scheme: `env:NAME`, `file:/path` (chmod 600 enforced),
-  `keyring:service/user`, `cmd:helper`. Inline connection strings with
-  credentials are rejected by model validation.
+- `connection_ref` scheme: `env:NAME`, `file:/path` (POSIX: group/other-readable
+  modes rejected, checked at resolve time; Windows: NTFS ACLs apply, as POSIX
+  mode bits are not meaningful there), `keyring:service/user`, `cmd:helper`.
+  Inline connection strings with credentials are rejected by model validation.
+- `cmd:` executes a fixed argument vector with no shell and no quoting;
+  arguments split on whitespace, so helper paths cannot contain spaces.
 - JDBC sidecar receives secrets via inherited environment — never argv,
   never protocol payloads (payload key scan rejects smuggled secrets).
 - Google/Lark access tokens are resolved per-connector and never written

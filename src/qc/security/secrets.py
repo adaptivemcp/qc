@@ -50,6 +50,26 @@ class FileSecretResolver:
         path = Path(ref[5:]).expanduser()
         if not path.is_file():
             raise AuthError(f"secret file not found: {path.name}")
+        self._check_permissions(path)
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise AuthError(f"cannot read secret file {path.name}") from exc
+        if not value:
+            raise AuthError(f"secret file {path.name} is empty")
+        return value
+
+    @staticmethod
+    def _check_permissions(path: Path) -> None:
+        """Refuse group/world-readable secret files on POSIX.
+
+        Windows does not model POSIX permission bits: ``os.stat`` reports
+        ``0o666`` for any writable file there, so this check would reject
+        every secret file on that platform. Access on Windows is governed
+        by NTFS ACLs and the user profile directory instead.
+        """
+        if os.name != "posix":
+            return
         try:
             mode = path.stat().st_mode
         except OSError as exc:
@@ -58,13 +78,6 @@ class FileSecretResolver:
             raise AuthError(
                 f"secret file {path.name} is readable by group/others; run chmod 600 on it"
             )
-        try:
-            value = path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise AuthError(f"cannot read secret file {path.name}") from exc
-        if not value:
-            raise AuthError(f"secret file {path.name} is empty")
-        return value
 
 
 class CmdSecretResolver:

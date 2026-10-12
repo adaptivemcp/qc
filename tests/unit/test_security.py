@@ -8,8 +8,9 @@ from pathlib import Path
 import pytest
 
 from qc.domain.errors import AuthError, InvalidArgumentsError
+from qc.security import secrets as secrets_module
 from qc.security.redaction import REDACTED, redact_mapping, redact_text, safe_error_message
-from qc.security.secrets import EnvSecretResolver, resolve_secret
+from qc.security.secrets import EnvSecretResolver, FileSecretResolver, resolve_secret
 
 
 class TestEnvSecrets:
@@ -63,6 +64,20 @@ class TestFileSecrets:
     def test_missing_file(self, tmp_path: Path) -> None:
         with pytest.raises(AuthError):
             resolve_secret(f"file:{tmp_path / 'nope'}")
+
+    def test_non_posix_skips_permission_bits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows reports 0o666 for writable files; the guard must not fire there."""
+        secret = tmp_path / "win-secret"
+        secret.write_text("hunter2\n", encoding="utf-8")
+        secret.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IROTH)
+        monkeypatch.setattr(secrets_module.os, "name", "nt")
+        # Would raise on POSIX; must be a no-op on Windows-style platforms.
+        FileSecretResolver._check_permissions(secret)
+        monkeypatch.undo()
+        with pytest.raises(AuthError):
+            FileSecretResolver._check_permissions(secret)
 
 
 class TestRedaction:
