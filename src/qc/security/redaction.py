@@ -57,7 +57,11 @@ def redact_mapping(data: dict[str, Any]) -> dict[str, Any]:
             out[key] = redact_mapping(value)
         elif isinstance(value, list):
             out[key] = [
-                redact_mapping(v) if isinstance(v, dict) else redact_text(v) if isinstance(v, str) else v
+                redact_mapping(v)
+                if isinstance(v, dict)
+                else redact_text(v)
+                if isinstance(v, str)
+                else v
                 for v in value
             ]
         elif isinstance(value, str):

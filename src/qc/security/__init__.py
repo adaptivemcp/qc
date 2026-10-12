@@ -1,6 +1,11 @@
-"""Security: secrets, redaction, policy evaluation, audit."""
+"""Security: secrets, redaction, policy evaluation, audit.
 
-from qc.security.audit import AuditLog
+``AuditLog`` is exported lazily to avoid an import cycle with
+``qc.observability.logging`` (audit logging needs the log formatter).
+"""
+
+from typing import TYPE_CHECKING, Any
+
 from qc.security.policy import (
     Ceiling,
     DecisionContext,
@@ -11,6 +16,9 @@ from qc.security.policy import (
 )
 from qc.security.redaction import REDACTED, redact_mapping, redact_text, safe_error_message
 from qc.security.secrets import SecretResolverChain, resolve_secret
+
+if TYPE_CHECKING:
+    from qc.security.audit import AuditLog
 
 __all__ = [
     "REDACTED",
@@ -27,3 +35,11 @@ __all__ = [
     "resolve_secret",
     "safe_error_message",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name == "AuditLog":
+        from qc.security.audit import AuditLog
+
+        return AuditLog
+    raise AttributeError(name)

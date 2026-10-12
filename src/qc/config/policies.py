@@ -117,8 +117,7 @@ def validate_policy_file(path: Path | str) -> SanitizationPolicy:
         raise ValidationError("policy must have a non-empty name")
     if policy.export_allowed and not policy.allowed_destinations:
         raise ValidationError(
-            "export_allowed is true but allowed_destinations is empty; "
-            "declare where rows may go"
+            "export_allowed is true but allowed_destinations is empty; declare where rows may go"
         )
     for src_name, src in policy.sources.items():
         if src.access == "read" and not src.datasets:

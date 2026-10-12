@@ -56,8 +56,7 @@ class FileSecretResolver:
             raise AuthError("cannot read secret file metadata") from exc
         if mode & (stat.S_IRGRP | stat.S_IROTH):
             raise AuthError(
-                f"secret file {path.name} is readable by group/others; "
-                "run chmod 600 on it"
+                f"secret file {path.name} is readable by group/others; run chmod 600 on it"
             )
         try:
             value = path.read_text(encoding="utf-8").strip()

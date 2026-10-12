@@ -93,7 +93,9 @@ class RedactingJsonFormatter(logging.Formatter):
 class SafeLoggerAdapter(logging.LoggerAdapter[logging.Logger]):
     """Adapter that accepts arbitrary kwargs as structured fields."""
 
-    def process(self, msg: str, kwargs: MutableMapping[str, Any]) -> tuple[str, MutableMapping[str, Any]]:
+    def process(
+        self, msg: str, kwargs: MutableMapping[str, Any]
+    ) -> tuple[str, MutableMapping[str, Any]]:
         extra = dict(kwargs.pop("extra", {}) or {})
         fields = kwargs.pop("fields", {}) or {}
         merged = {**extra, **fields}
@@ -124,9 +126,7 @@ def setup_logging(*, level: str = "info", json_output: bool = True, redact: bool
     if json_output:
         handler.setFormatter(RedactingJsonFormatter(redact=redact))
     else:
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     logger.addHandler(handler)
     logger.propagate = False
     _configured = True

@@ -72,9 +72,7 @@ class SourceConfig(_Base):
             if marker in lowered:
                 raise ValueError(f"connection_ref must not contain inline '{marker}'")
         if not any(v.startswith(p) for p in ("env:", "keyring:", "file:", "cmd:")):
-            raise ValueError(
-                "connection_ref must start with env:, keyring:, file:, or cmd:"
-            )
+            raise ValueError("connection_ref must start with env:, keyring:, file:, or cmd:")
         return v
 
 
@@ -298,10 +296,6 @@ class Relationship(_Base):
 # ------------------------------------------------------------- ProfileArtifact
 
 
-class BudgetRecord(Budget):
-    """Budget attached to an artifact for provenance."""
-
-
 class ProfileArtifact(_Base):
     """Versioned, shareable profile summary (SPEC 5.6)."""
 
@@ -321,7 +315,7 @@ class ProfileArtifact(_Base):
     row_count: int | None = None
     row_count_measurement: Measurement = Measurement.UNKNOWN
     profile_config: dict[str, Any] = Field(default_factory=dict)
-    budget: BudgetRecord = Field(default_factory=BudgetRecord)
+    budget: Budget = Field(default_factory=Budget)
     budget_usage: dict[str, float] = Field(default_factory=dict)
     sensitivity_findings: list[SensitivityFinding] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -375,6 +369,7 @@ class SanitizationPolicy(_Base):
     @classmethod
     def _coerce_version(cls, v: object) -> str:
         return str(v)
+
     name: str
     owner: str | None = None
     approved_at: datetime | None = None

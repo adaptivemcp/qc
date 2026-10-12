@@ -87,8 +87,10 @@ class AuditLog:
                 os.close(fd)
         except OSError as exc:
             # Auditing must not crash the operation, but the failure is loud.
-            log.warning("audit write failed", fields={"error_code": "AUDIT_WRITE_FAILED",
-                                                      "detail": str(exc)})
+            log.warning(
+                "audit write failed",
+                fields={"error_code": "AUDIT_WRITE_FAILED", "detail": str(exc)},
+            )
 
     def read_all(self) -> list[AuditEvent]:
         if self.path is None or not self.path.is_file():

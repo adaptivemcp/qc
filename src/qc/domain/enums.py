@@ -202,7 +202,9 @@ class Budget(QCBaseModel):
     def merge(self, override: Budget) -> Budget:
         """Return a budget where non-None values from ``override`` win."""
         return Budget(
-            max_queries=override.max_queries if override.max_queries is not None else self.max_queries,
+            max_queries=override.max_queries
+            if override.max_queries is not None
+            else self.max_queries,
             max_rows=override.max_rows if override.max_rows is not None else self.max_rows,
             max_bytes=override.max_bytes if override.max_bytes is not None else self.max_bytes,
             max_runtime_seconds=(
@@ -223,7 +225,9 @@ class BudgetUsage(QCBaseModel):
     runtime_seconds: float = 0.0
     cost: float = 0.0
 
-    def add_query(self, rows: int = 0, byte_count: int = 0, runtime: float = 0.0, cost: float = 0.0) -> None:
+    def add_query(
+        self, rows: int = 0, byte_count: int = 0, runtime: float = 0.0, cost: float = 0.0
+    ) -> None:
         self.queries += 1
         self.rows += rows
         self.bytes += byte_count
@@ -238,18 +242,21 @@ class BudgetUsage(QCBaseModel):
             return "max_rows"
         if budget.max_bytes is not None and self.bytes > budget.max_bytes:
             return "max_bytes"
-        if budget.max_runtime_seconds is not None and self.runtime_seconds > budget.max_runtime_seconds:
+        if (
+            budget.max_runtime_seconds is not None
+            and self.runtime_seconds > budget.max_runtime_seconds
+        ):
             return "max_runtime_seconds"
         if budget.max_cost is not None and self.cost > budget.max_cost:
             return "max_cost"
         return None
 
-    def would_exceed(self, budget: Budget, *, queries: int = 0, rows: int = 0, byte_count: int = 0) -> bool:
+    def would_exceed(
+        self, budget: Budget, *, queries: int = 0, rows: int = 0, byte_count: int = 0
+    ) -> bool:
         """Would one more query of this shape cross a limit?"""
         if budget.max_queries is not None and self.queries + queries > budget.max_queries:
             return True
         if budget.max_rows is not None and self.rows + rows > budget.max_rows:
             return True
-        return bool(
-            budget.max_bytes is not None and self.bytes + byte_count > budget.max_bytes
-        )
+        return bool(budget.max_bytes is not None and self.bytes + byte_count > budget.max_bytes)

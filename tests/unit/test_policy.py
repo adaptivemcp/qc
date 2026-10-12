@@ -14,7 +14,9 @@ def strict_policy() -> PolicyEngine:
 
 
 def permissive_policy() -> PolicyEngine:
-    text = default_policy_yaml() + """
+    text = (
+        default_policy_yaml()
+        + """
 sources:
   analytics:
     access: read
@@ -26,6 +28,7 @@ sources:
       total_amount:
         action: keep
 """
+    )
     return PolicyEngine(parse_policy(text))
 
 
@@ -68,9 +71,7 @@ class TestDefaults:
 
     def test_external_egress_denied(self) -> None:
         e = permissive_policy()
-        d = e.check(
-            Operation.EXTERNAL_EGRESS, DecisionContext(source="analytics")
-        )
+        d = e.check(Operation.EXTERNAL_EGRESS, DecisionContext(source="analytics"))
         assert not d.allowed
 
     def test_external_model_denied(self) -> None:
@@ -104,8 +105,7 @@ class TestRequire:
 class TestBudgetCeiling:
     def test_policy_budget_cannot_exceed_ceiling(self) -> None:
         policy = parse_policy(
-            default_policy_yaml()
-            + "\nbudget:\n  max_rows: 1000000\n  max_bytes: 999999999\n"
+            default_policy_yaml() + "\nbudget:\n  max_rows: 1000000\n  max_bytes: 999999999\n"
         )
         e = PolicyEngine(policy, Ceiling(max_rows=50, max_bytes=100))
         rows, byte_count, _rt, _q = e.effective_budget()
@@ -165,8 +165,7 @@ class TestPolicyValidation:
 
         with pytest.raises(InvalidArgumentsError):
             parse_policy(
-                default_policy_yaml()
-                + "\nsources:\n  s:\n    access: read\n    datasets: [t]\n"
+                default_policy_yaml() + "\nsources:\n  s:\n    access: read\n    datasets: [t]\n"
                 "    columns:\n      c:\n        action: explode\n"
             )
 
