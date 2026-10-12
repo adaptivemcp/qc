@@ -28,6 +28,12 @@ async def export_to_database(
     mode: str = "create",
 ) -> dict[str, Any]:
     """Write a JSONL/CSV file to an explicitly approved destination."""
+    # argument validation first (cheap, no I/O), then policy gates
+    if mode not in ("create", "append", "replace"):
+        raise ValidationError(f"invalid mode '{mode}'; use create|append|replace")
+    if not table.isidentifier() and not all(p.isidentifier() for p in table.split(".")):
+        raise ValidationError(f"invalid table name: {table}")
+
     engine = rt.engine(policy_name)
     policy = engine.policy
     ctx = DecisionContext(source=destination, dataset=table)
@@ -36,27 +42,20 @@ async def export_to_database(
 
     if not policy.write_allowed:
         raise PolicyDeniedError("policy does not allow writes (write_allowed=false)")
-    if mode not in ("create", "append", "replace"):
-        raise ValidationError(f"invalid mode '{mode}'; use create|append|replace")
-    if not table.isidentifier() and not all(p.isidentifier() for p in table.split(".")):
-        raise ValidationError(f"invalid table name: {table}")
 
     dest_cfg = rt.source(destination)
     rows = _read_rows(output)
     if not rows:
         raise ValidationError("output file contains no rows")
 
-    connector = rt.connector_for(dest_cfg)
+    # destination role is a *separate* writer (SPEC 6, 10.3): source
+    # connectors never gain write_rows by configuration
+    writer = _destination_writer(dest_cfg)
     try:
-        if not hasattr(connector, "write_rows"):
-            raise WriteError(
-                f"connector '{destination}' does not support writes",
-                detail={"destination": destination},
-            )
         columns = list(rows[0].keys())
-        written = await connector.write_rows(dest_cfg, table, columns, rows, mode=mode)
+        written = await writer.write_rows(dest_cfg, table, columns, rows, mode=mode)
     finally:
-        await connector.close()
+        await writer.close()
 
     rt.audit.record(
         OperationKind.EXPORT_DATABASE,
@@ -75,6 +74,23 @@ async def export_to_database(
         "mode": mode,
         "columns": len(rows[0]),
     }
+
+
+def _destination_writer(config: Any) -> Any:
+    """Return the writable destination role for a source config."""
+    kind = config.connector
+    if kind == "postgres":
+        from qc.exports.db_writer import PostgresDestination
+
+        return PostgresDestination()
+    if kind == "mysql":
+        from qc.exports.db_writer import MySQLDestination
+
+        return MySQLDestination()
+    raise WriteError(
+        f"connector '{kind}' does not support database destination writes",
+        detail={"destination": config.name},
+    )
 
 
 def _read_rows(path: Path) -> list[dict[str, Any]]:
