@@ -10,6 +10,7 @@ tell the profiling planner what probes are possible.
 | `fixture` (JSONL/CSV) | none | local files, no writes | implemented (internal/testing) |
 | `postgres` | `psycopg[binary]` (`qc[postgres]`) | `SET default_transaction_read_only=on` + role | live-tested (PG 16) |
 | `mysql` | `mysql-connector-python` (`qc[mysql]`) | `SET SESSION TRANSACTION READ ONLY` + role | live-tested (MySQL 8.4) |
+| `sqlite` | none (stdlib `sqlite3`) | `file:…?mode=ro` URI + `query_only` + authorizer | tested (SQLite 3.25+) |
 | `maxcompute` | JVM sidecar + pinned JDBC jar | read-only JDBC + SELECT-only bridge | protocol-tested; live opt-in (M4) |
 | `google-sheets` | `httpx` + OAuth/service token | readonly scope; no write API calls exist | mocked-contract tested |
 | `lark-sheets` | `httpx` + tenant/user token | readonly scope; no write API calls exist | mocked-contract tested |
@@ -69,6 +70,62 @@ a read-only account (`GRANT SELECT ON ...`), TLS via DSN.
 export MY_DSN='mysql://readonly@db:3306/app?ssl_disabled=false'
 qc source add app --type mysql --connection-ref env:MY_DSN --schema app
 ```
+
+## SQLite
+
+A local file, not a network service, so the secret reference holds a
+**filesystem path**. It still goes through the normal secret machinery, so
+the database location is never hardcoded in `sources.json`:
+
+```bash
+export QC_SQLITE_PATH="$PWD/data/analytics.db"
+qc source add analytics --type sqlite --connection-ref env:QC_SQLITE_PATH \
+  --dataset main.orders --dataset main.customers
+qc policy grant strict-local analytics --dataset main.orders
+qc profile run analytics main.orders
+```
+
+Datasets are `main.<table>`; `main` is the only namespace. Tables and views
+are both listed (`sqlite_master`, `type IN ('table','view')`), and
+`sqlite_%` internal tables are hidden.
+
+### Read-only is enforced by SQLite, not by convention
+
+This is the strongest read-only guarantee of any connector here, because
+the *engine* refuses writes rather than trusting a session setting:
+
+| Layer | Effect |
+|---|---|
+| `file:…?mode=ro` URI | SQLite itself raises on any write |
+| `PRAGMA query_only=ON` | second session-level guard |
+| statement authorizer | denies writes, DDL, `ATTACH`/`DETACH`, and every `PRAGMA` outside a 3-name read-only allowlist (`table_info`, `foreign_key_list`, `table_xinfo`) |
+| `assert_not_dangerous_sql` | only `SELECT`/`WITH` reaches the wire |
+| `quote_ident` + `safety_check_dataset` | dataset/column names validated *and* quoted |
+
+A missing file is an error, never an implicitly created database.
+
+### Differences from the networked connectors
+
+- **No cost estimates and no statistics provider**, so `statistics` is not
+  declared. Row counts come from an exact `count(*)` (a real scan, but
+  bounded); `estimate_size` reports the file size in bytes and leaves the
+  row count to the profiler.
+- **Percentiles are nearest-rank**, not interpolated: SQLite has no
+  `percentile_cont`, so `length_stats` uses `ceil(n*p)` via a window
+  function in a single scan. A p50 falling between two observed lengths can
+  differ from PostgreSQL's interpolated value by one rank. `min`/`max` are
+  exact. Needs SQLite ≥ 3.25.
+- **`PRAGMA` is not SQL and cannot be parameterized**, so it is confined to
+  `_fetch_meta`, which requires the pragma name to be on the allowlist and
+  the table name to pass `quote_ident` before interpolation.
+- **Placeholders are `?`, not `%s`** — `--where` predicates bind through the
+  same shared, validated `build_where` path as the other SQL connectors.
+- **Stable-key sampling falls back to `rowid`.** Callers that name no
+  columns (e.g. `sanitize preview`) get a deterministic order from the
+  implicit `rowid`; `WITHOUT ROWID` tables fall back to the first declared
+  column.
+- Concurrency is bounded by the shared pool; blocking `sqlite3` calls run
+  on a worker thread, never on the event loop.
 
 ## MaxCompute (via JVM sidecar)
 
@@ -159,3 +216,6 @@ export QC_TEST_POSTGRES_DSN='postgresql://user:pass@127.0.0.1:5432/db'
 export QC_TEST_MYSQL_DSN='mysql://user:pass@127.0.0.1:3306/db'
 uv run pytest tests/contract -m integration
 ```
+
+SQLite needs no server, so `TestSQLiteContract` runs the same suite
+unconditionally — no `integration` marker, no container.

@@ -14,7 +14,7 @@ validates the result, and makes every important decision traceable.
 
 ## What it does
 
-- **Connect** to PostgreSQL, MySQL, Alibaba MaxCompute (via JVM JDBC
+- **Connect** to PostgreSQL, MySQL, SQLite, Alibaba MaxCompute (via JVM JDBC
   sidecar), Google Sheets, and Lark Sheets — read-only by default.
 - **Discover** schemas, constraints, keys, and spreadsheet structure.
 - **Profile** adaptively under row/byte/query/time budgets: logical types
@@ -69,6 +69,16 @@ qc sanitize export  analytics public.orders --policy strict-local \
 qc generate plan <profile-id> --rows 1000 --seed 42
 qc generate run reports/plan_*.plan.json --output output/synth.jsonl
 qc generate validate output/synth.jsonl --profile <profile-id>
+```
+
+SQLite needs no server — point a source at a local file:
+
+```bash
+export QC_SQLITE_PATH="$PWD/data/analytics.db"
+qc source add analytics --type sqlite --connection-ref env:QC_SQLITE_PATH \
+  --dataset main.orders
+qc policy grant strict-local analytics --dataset main.orders
+qc profile run analytics main.orders
 ```
 
 Fixture (JSONL/CSV) sources let you try everything without a database:

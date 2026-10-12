@@ -153,7 +153,7 @@ def init_cmd(
 def source_add(
     name: str,
     type: str = typer.Option(
-        ..., "--type", help="postgres|mysql|maxcompute|google-sheets|lark-sheets|fixture"
+        ..., "--type", help="postgres|mysql|sqlite|maxcompute|google-sheets|lark-sheets|fixture"
     ),
     connection_ref: str = typer.Option(
         ...,

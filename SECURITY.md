@@ -37,6 +37,9 @@ guaranteed anonymization (see ADR-005).
 
 - Read-only source sessions (`SET default_transaction_read_only` /
   `SET SESSION TRANSACTION READ ONLY`, read-only JDBC connections).
+  SQLite is stronger: `file:…?mode=ro` makes the engine refuse writes,
+  backed by `PRAGMA query_only=ON` and a statement authorizer that denies
+  DDL, `ATTACH`/`DETACH`, and any `PRAGMA` outside a read-only allowlist.
 - Raw MCP row output: **denied** (`raw_mcp_rows = false`).
 - Source writes: **denied** (`source_writes = false`, enforced by ceiling).
 - External model calls: **denied**.

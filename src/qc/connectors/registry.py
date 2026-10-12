@@ -18,6 +18,7 @@ _BUILTIN = {
     "fixture": "qc.connectors.fixture:FixtureConnector",
     "postgres": "qc.connectors.postgres:PostgresConnector",
     "mysql": "qc.connectors.mysql:MySQLConnector",
+    "sqlite": "qc.connectors.sqlite_conn:SQLiteConnector",
     "google-sheets": "qc.connectors.google_sheets:GoogleSheetsConnector",
     "lark-sheets": "qc.connectors.lark_sheets:LarkSheetsConnector",
     "maxcompute": "qc.connectors.maxcompute:MaxComputeConnector",

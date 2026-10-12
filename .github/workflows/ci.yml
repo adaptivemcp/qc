@@ -26,8 +26,9 @@ jobs:
         run: uv run mypy
       - name: Unit & property tests
         run: uv run pytest tests/unit tests/property tests/security -q
-      - name: Contract tests (fixture connectors)
-        run: uv run pytest tests/contract -q -k "fixture or fake or bridge"
+      - name: Contract tests (no external services)
+        # fixture, fake/bridge, and sqlite need no server, so they run here
+        run: uv run pytest tests/contract -q -k "fixture or fake or bridge or sqlite"
 
   integration-db:
     runs-on: ubuntu-latest

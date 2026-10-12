@@ -127,6 +127,63 @@ async def _seed_mysql() -> Triple:
     return MySQLConnector(), config, f"{schema}.qc_contract"  # type: ignore[return-value]
 
 
+async def _seed_sqlite() -> Triple:
+    """Seed the contract table into a temporary SQLite file.
+
+    SQLite needs no server, so this runs everywhere (no live marker).
+    """
+    import sqlite3
+    import tempfile
+
+    from qc.connectors.sqlite_conn import SQLiteConnector
+    from qc.domain.models import SourceConfig
+
+    path = Path(tempfile.mkdtemp()) / "contract.db"
+    seed = sqlite3.connect(path)
+    try:
+        seed.execute(
+            """CREATE TABLE qc_contract (
+                id INTEGER PRIMARY KEY,
+                label TEXT NOT NULL,
+                amount REAL,
+                flag INTEGER,
+                "when" TEXT,
+                note TEXT,
+                big_id INTEGER
+            )"""
+        )
+        for i in range(10):
+            seed.execute(
+                "INSERT INTO qc_contract VALUES (?,?,?,?,?,?,?)",
+                (
+                    i,
+                    f"row-{i}",
+                    f"{i}.25",
+                    i % 2 == 0,
+                    f"2025-01-{(i % 28) + 1:02d}",
+                    "" if i % 3 == 0 else None,
+                    9007199254740993 + i,
+                ),
+            )
+        seed.commit()
+    finally:
+        seed.close()
+    config = SourceConfig(
+        name="sqlite-contract",
+        connector="sqlite",
+        connection_ref="env:QC_TEST_SQLITE_PATH",
+        options={"path": str(path)},
+    )
+    return SQLiteConnector(), config, "main.qc_contract"  # type: ignore[return-value]
+
+
+@pytest.fixture
+async def sqlite_triple() -> Triple:
+    triple = await _seed_sqlite()
+    yield triple
+    await triple[0].close()
+
+
 @pytest.fixture
 async def postgres_triple() -> Triple:
     if not os.environ.get("QC_TEST_POSTGRES_DSN"):

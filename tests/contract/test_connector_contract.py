@@ -238,6 +238,14 @@ class TestFixtureContract(ContractSuite):
         return fixture_triple
 
 
+class TestSQLiteContract(ContractSuite):
+    dataset = "main.qc_contract"
+
+    @pytest.fixture
+    async def triple(self, sqlite_triple: Triple) -> Triple:
+        return sqlite_triple
+
+
 @pytest.mark.integration
 class TestPostgresContract(ContractSuite):
     @pytest.fixture
