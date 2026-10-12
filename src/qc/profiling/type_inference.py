@@ -321,12 +321,16 @@ _DIGIT_RUN = re.compile(r"\d+")
 
 
 def normalize_pattern(value: str) -> str:
-    """Reduce a value to a comparable format skeleton."""
+    """Reduce a value to a comparable format skeleton.
+
+    Digit *runs* keep their length (``00123`` → ``99999``) so shapes can
+    be regenerated without losing cardinality information.
+    """
     out = value
     for _fid, regex, _d in _FORMAT_BUILDERS:
         if regex.fullmatch(out):
-            return _DIGIT_RUN.sub("9", out).lower()
-    return _DIGIT_RUN.sub("9", out)[:64].lower()
+            return _DIGIT_RUN.sub(lambda m: "9" * len(m.group()), out).lower()
+    return _DIGIT_RUN.sub(lambda m: "9" * len(m.group()), out)[:64].lower()
 
 
 def detect_format_patterns(

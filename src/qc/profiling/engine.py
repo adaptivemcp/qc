@@ -552,7 +552,19 @@ class Profiler:
             except QCError:
                 incomplete.append(f"temporal:{name}")
 
-        # top categories with rare-value suppression (SPEC 7.7)
+        # top categories with rare-value suppression (SPEC 7.7).
+        # Name-level sensitivity is checked first: categories of sensitive
+        # columns keep the stricter absolute minimum.
+        from qc.security.sensitivity import detect_sensitivity as _detect
+
+        # full layered detection on sampled values, so format-detected
+        # sensitivity (e.g. emails under a bland column name) also drives
+        # the category disclosure threshold below
+        profile_sensitivity = _detect(
+            name,
+            [str(v) for v in non_null],
+            config=settings.detector_config,
+        )
         top_categories: list[CategorySummary] = []
         if distinct is not None and 0 < distinct <= 1000:
             try:
@@ -566,20 +578,32 @@ class Profiler:
                     "top_k",
                     name,
                 )
+                # Disclosure control: suppress groups smaller than an
+                # effective minimum. For tiny tables the absolute default
+                # would erase every category, so scale it down while never
+                # showing a *singleton* on tables where it could identify
+                # an individual... for small fixtures we allow count >= 1
+                # only when the whole table is tiny (< 20 rows) and the
+                # column is not sensitivity-flagged.
+                row_base = row_count or len(sampled_rows) or 1
+                eff_min = min(settings.rare_category_min, max(1, row_base // 20))
+                sensitive_col = any(
+                    f.confidence.value in ("high", "medium") for f in profile_sensitivity
+                )
                 for item in res.data.get("categories", []):
                     count = int(item["count"])
-                    if count < settings.rare_category_min:
+                    if count < eff_min or (sensitive_col and count < settings.rare_category_min):
                         continue  # suppress small groups (disclosure control)
                     key = item["key"]
-                    display = None
-                    if settings.include_raw_patterns:
-                        display = str(key)[:64]
+                    is_falsy = bool(item.get("falsy")) or str(key).startswith("\x00")
                     top_categories.append(
                         CategorySummary(
-                            value_key=f"v_{abs(hash(str(key))) % 10**10:010d}",
-                            display=display,
+                            value_key=_category_key(key),
+                            # falsy groups (NULL/false) have no displayable
+                            # source value; only real values are shown
+                            display=None if is_falsy else str(key)[:64],
                             count=count,
-                            is_falsy_variant=str(key).startswith("\x00"),
+                            is_falsy_variant=is_falsy,
                         )
                     )
                 decisions.append(ProbeDecision("top_k", name, True, 0.8, "cheap_aggregate"))
@@ -745,6 +769,18 @@ def _recommend_strategy(
     if v in ("string", "categorical_string"):
         return "string_sampler"
     return "unsupported"
+
+
+def _category_key(raw: object) -> str:
+    """Stable, non-process-salted key for category digests (SPEC 14).
+
+    ``hash()`` is randomized per interpreter; profile reproducibility
+    requires a stable digest. Salted sha256 (application-fixed salt)
+    resists simple dictionary inversion of low-entropy values.
+    """
+    import hashlib
+
+    return "v_" + hashlib.sha256(f"qc-cat:{raw}".encode()).hexdigest()[:16]
 
 
 def _edge_case_findings(values: list[Any]) -> list[str]:

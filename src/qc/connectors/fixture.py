@@ -241,15 +241,31 @@ class FixtureConnector(BaseConnector):
             return ProfileQueryResult(kind=kind, data=data, rows_returned=1)
         if kind == "top_k":
             k = int(query.params.get("k", 10))
+            # SQL GROUP BY semantics: NULLs form their own group and are
+            # marked as a falsy variant; other values are returned raw so
+            # downstream generation can sample them directly.
             cat_counts: dict[str, int] = {}
+            falsy_keys: set[str] = set()
             for r in rows:
-                key = json_key(r.get(col))
+                v = r.get(col)
+                if v is None:
+                    key = json_key(None)
+                elif isinstance(v, bool):
+                    key = json_key(v)
+                elif isinstance(v, (int, float)):
+                    key = str(v)
+                else:
+                    key = str(v)
+                if str(v) is None or v is None or isinstance(v, bool):
+                    falsy_keys.add(key)
                 cat_counts[key] = cat_counts.get(key, 0) + 1
             top = sorted(cat_counts.items(), key=lambda kv: -kv[1])[:k]
             return ProfileQueryResult(
                 kind=kind,
                 data={
-                    "categories": [{"key": k2, "count": c} for k2, c in top],
+                    "categories": [
+                        {"key": k2, "count": c, "falsy": k2 in falsy_keys} for k2, c in top
+                    ],
                     "distinct_count": len(cat_counts),
                 },
                 rows_returned=len(top),
