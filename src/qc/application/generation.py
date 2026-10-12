@@ -122,6 +122,42 @@ def _ensure_unique(
     return value
 
 
+def _check_unique_feasibility(resolved: dict[str, Any], unique_cols: set[str], rows: int) -> None:
+    """Reject impossible uniqueness before generating a single row.
+
+    A bounded numeric range that cannot yield ``rows`` distinct values
+    fails immediately with an actionable error instead of exhausting
+    per-row retries (SPEC 9.6).
+    """
+    for name in sorted(unique_cols):
+        plan = resolved[name]
+        col = plan.profile
+        if col is None or col.numeric is None:
+            continue
+        if plan.strategy != "numeric_distribution":
+            continue
+        if col.numeric.minimum is None or col.numeric.maximum is None:
+            continue
+        try:
+            lo = int(float(col.numeric.minimum))
+            hi = int(float(col.numeric.maximum))
+        except (TypeError, ValueError):
+            continue
+        space = hi - lo + 1
+        if space < rows:
+            raise GenerationError(
+                f"column '{name}' requires {rows} unique values but its "
+                f"observed range [{col.numeric.minimum}, {col.numeric.maximum}] "
+                f"holds only {space}; reduce --rows, override the strategy, "
+                "or drop the uniqueness requirement",
+                detail={
+                    "column": name,
+                    "value_space": str(space),
+                    "rows_requested": str(rows),
+                },
+            )
+
+
 async def run_generation(
     rt: Runtime,
     *,
@@ -183,16 +219,44 @@ async def run_generation(
         if strat_plan.fallback:
             fallbacks.append(col.name)
 
-    # Uniqueness requirements (SPEC 9.2): columns whose profile marks
-    # exact uniqueness get bounded retry, then fail closed (SPEC 9.6).
-    unique_cols = {
-        name
-        for name, sp in resolved.items()
-        if sp.profile is not None
-        and sp.profile.unique is True
-        and sp.profile.unique_measurement.value == "exact"
-    }
+    # Uniqueness requirements (SPEC 9.2 "declared and *approved* inferred
+    # uniqueness"): enforce exact uniqueness only where it is actually a
+    # key — a declared PK, an identifier-like type, or an id-ish name.
+    # Sample-uniqueness on measure columns (e.g. a qty column that
+    # happens to be distinct in a small table) is evidence, not a key
+    # constraint, and must not make generation fail (SPEC 9.2, 9.6).
+    declared_pk = set(primary.dataset_schema.primary_key)
+    unique_cols: set[str] = set()
+    unenforced_sample_unique: list[str] = []
+    for name, sp in resolved.items():
+        col = sp.profile
+        if col is None or col.unique is not True:
+            continue
+        if col.unique_measurement.value != "exact":
+            continue
+        lowered = name.lower()
+        keyish = (
+            name in declared_pk
+            or col.logical_type.value in ("identifier", "uuid")
+            or lowered in ("id", "uuid", "guid")
+            or lowered.endswith("_id")
+            or lowered.endswith("_uuid")
+        )
+        if keyish:
+            unique_cols.add(name)
+        else:
+            unenforced_sample_unique.append(name)
     seen: dict[str, set[str]] = {c: set() for c in unique_cols}
+    pre_warnings: list[str] = []
+    if unenforced_sample_unique:
+        pre_warnings.append(
+            "sample-uniqueness not enforced for non-key columns: "
+            + ", ".join(sorted(unenforced_sample_unique))
+        )
+
+    # Fail fast when a unique key's value space cannot fit the request
+    # (SPEC 9.6: stop and report; never silently weaken the constraint).
+    _check_unique_feasibility(resolved, unique_cols, plan.rows)
 
     # Observed null rates (SPEC 9.2): preserve within tolerance using the
     # seeded RNG so output stays reproducible. Rate comes from the profile,
@@ -206,7 +270,7 @@ async def run_generation(
             null_rates[col.name] = nulls / total
 
     rows: list[dict[str, Any]] = []
-    warnings: list[str] = []
+    warnings: list[str] = list(pre_warnings)
     for i in range(plan.rows):
         context.row_index = i
         row: dict[str, Any] = {}

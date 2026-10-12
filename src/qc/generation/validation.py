@@ -48,6 +48,7 @@ def validate_generation(
     """
     tol = {**DEFAULT_TOLERANCES, **(tolerances or {})}
     metrics: list[FidelityMetric] = []
+    declared_pk = set(artifact.dataset_schema.primary_key)
 
     if not rows:
         metrics.append(
@@ -99,22 +100,34 @@ def validate_generation(
                 )
             )
 
-        # ---- hard: uniqueness when required --------------------------------
+        # ---- hard: uniqueness for keys (SPEC 9.2 "approved") ---------------
+        # Only key-like columns (declared PK, identifier/uuid type, id-ish
+        # name) make uniqueness a hard constraint. Sample-uniqueness on
+        # measures (qty, dates, ...) is evidence, not a requirement.
         if col.unique is True and col.unique_measurement == Measurement.EXACT:
-            values = [r.get(col.name) for r in rows if r.get(col.name) is not None]
-            distinct = len(set(map(_key, values)))
-            rate = distinct / len(values) if values else 1.0
-            metrics.append(
-                FidelityMetric(
-                    name=f"{col.name}:uniqueness",
-                    observed=1.0,
-                    generated=round(rate, 4),
-                    distance=round(1.0 - rate, 4),
-                    tolerance=tol["uniqueness_rate"],
-                    passed=rate >= 1.0 - tol["uniqueness_rate"],
-                    hard=True,
-                )
+            lowered = col.name.lower()
+            keyish = (
+                col.name in declared_pk
+                or col.logical_type in (LogicalType.IDENTIFIER, LogicalType.UUID)
+                or lowered in ("id", "uuid", "guid")
+                or lowered.endswith("_id")
+                or lowered.endswith("_uuid")
             )
+            if keyish:
+                values = [r.get(col.name) for r in rows if r.get(col.name) is not None]
+                distinct = len(set(map(_key, values)))
+                rate = distinct / len(values) if values else 1.0
+                metrics.append(
+                    FidelityMetric(
+                        name=f"{col.name}:uniqueness",
+                        observed=1.0,
+                        generated=round(rate, 4),
+                        distance=round(1.0 - rate, 4),
+                        tolerance=tol["uniqueness_rate"],
+                        passed=rate >= 1.0 - tol["uniqueness_rate"],
+                        hard=True,
+                    )
+                )
 
         # ---- soft: numeric range -------------------------------------------
         if col.numeric and col.numeric.minimum is not None:
