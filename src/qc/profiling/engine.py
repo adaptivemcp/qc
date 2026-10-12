@@ -406,8 +406,32 @@ class Profiler:
         non_null = [v for v in values if v is not None]
         observed_exact = row_count is not None and len(values) == (row_count or -1)
 
-        # null / falsy analysis (SPEC 7.5)
+        # null / falsy analysis (SPEC 7.5): sample-based first, then
+        # upgrade to an exact aggregate probe when the connector supports
+        # it (SPEC 7.2 stage 3: cheap null counts before sampling).
         falsy = analyze_falsy(values, row_count=row_count, exact=observed_exact)
+        try:
+            res = await run_query(
+                ProfileQuery(
+                    kind="null_count",
+                    dataset=dataset,
+                    params={"column": name},
+                    description=f"exact null count for {name}",
+                ),
+                "null_count",
+                name,
+            )
+            exact_nulls = int(res.data["null_count"])
+            falsy.stats.null_count = exact_nulls
+            falsy.stats.null_measurement = Measurement.EXACT
+            if row_count is None and "row_count" in res.data:
+                row_count = int(res.data["row_count"])
+            falsy.raw_interpretation["sql_null"] = exact_nulls
+            decisions.append(ProbeDecision("null_count", name, True, 1.0, "cheap_aggregate"))
+        except BudgetExceededError:
+            incomplete.append(f"null_count:{name}")
+        except QCError:
+            incomplete.append(f"null_count:{name}")
 
         # type inference (SPEC 7.6)
         inference = infer_logical_type(

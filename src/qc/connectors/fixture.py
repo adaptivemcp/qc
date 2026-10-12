@@ -227,8 +227,14 @@ class FixtureConnector(BaseConnector):
                 v = r.get(col)
                 if isinstance(v, (int, float)) and not isinstance(v, bool):
                     nums.append(float(v))
-                elif isinstance(v, str) and re.match(r"^\d{4}-\d{2}-\d{2}", v):
-                    dates.append(v)
+                elif isinstance(v, str):
+                    # numeric strings are common in JSONL fixtures; parse
+                    # decimal-safe enough for min/max evidence
+                    try:
+                        nums.append(float(v))
+                    except ValueError:
+                        if re.match(r"^\d{4}-\d{2}-\d{2}", v):
+                            dates.append(v)
             dates.sort()
             data: dict[str, Any] = {"row_count": len(rows)}
             if nums:
