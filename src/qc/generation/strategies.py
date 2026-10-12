@@ -86,6 +86,10 @@ class CategoricalSampler(_BaseStrategy):
     name = "categorical_sampler"
 
     def can_generate(self, column: ColumnProfile) -> bool:
+        # A unique column needs unbounded distinct values; a bounded
+        # category pool can never satisfy that (SPEC 9.2/9.6).
+        if column.unique is True:
+            return False
         return bool(column.top_categories) and (
             column.distinct_count is not None and column.distinct_count <= 200
         )
