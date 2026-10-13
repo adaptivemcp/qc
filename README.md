@@ -81,6 +81,38 @@ qc policy grant strict-local analytics --dataset main.orders
 qc profile run analytics main.orders
 ```
 
+### Try it with a sample database
+
+If you have no SQLite file handy, generate one that deliberately exercises
+QC's harder paths — layered sensitivity detection, type-inference
+ambiguity, null/falsy variants, and a `WITHOUT ROWID` table:
+
+```bash
+mkdir -p workbench && cd workbench
+qc init
+python3 "$QC_REPO/tools/make_demo_db.py" --out demo.db --reset
+
+export SQLITE_QC="$PWD/demo.db"          # fish: set -x SQLITE_QC "$PWD/demo.db"
+qc source add demo --type sqlite --connection-ref env:SQLITE_QC
+qc source test demo
+qc dataset list demo
+qc profile run demo main.customers --max-queries 60 --sample-size 800
+```
+
+where `QC_REPO` is this checkout, e.g. `QC_REPO=$(git rev-parse --show-toplevel)`
+before you `cd`. All values are fabricated (example.com domains, 555-01xx
+phones, documentation IP ranges, Luhn-valid card numbers issued by
+nobody), and the generator is deterministic.
+
+The six tables deliberately target: layered sensitivity detection
+(`customers`), free text and null/falsy variants (`orders`), type-inference
+ambiguity including an untyped mixed column and `NaN`/`Infinity`
+(`events`), a `WITHOUT ROWID` table (`event_log`), view discovery
+(`metrics_daily`), and zero-row aggregates (`empty_audit`). Two behaviors
+look like bugs but are correct fail-closed design — see
+[docs/gaps.md](docs/gaps.md) and the demo walkthrough in your
+`workbench/README-demo.md`.
+
 Fixture (JSONL/CSV) sources let you try everything without a database:
 
 ```bash
@@ -290,11 +322,115 @@ qc source test analytics
 Finally, connect with a **least-privilege read-only account**. QC opens
 read-only sessions, but the account's grants are the real boundary.
 
+## Share data with an AI, safely
+
+QC never sends your data anywhere. It produces a **sanitized file** that *you*
+then choose to upload, so disclosure stays an explicit, auditable step you
+control. Two routes, both deny-by-default.
+
+### Route 1 — export a sanitized file (recommended)
+
+```bash
+# 1. Inspect before you export anything
+qc sanitize preview analytics public.orders --policy share-ai --limit 10
+
+# 2. Write the sanitized file + provenance manifest
+qc sanitize export analytics public.orders --policy share-ai \
+  --output output/share.jsonl
+
+# 3. Optional: CSV for a spreadsheet, with formula-injection escaping
+qc sanitize export analytics public.orders --policy share-ai \
+  --output output/share.csv --format csv --delimiter ';'
+
+# 4. Confirm nothing raw left the process
+grep -o 's3cr3t\|real@customer\.com' output/share.jsonl   # expect no hits
+```
+
+Every export writes a `.manifest.json` next to the file recording rows,
+source, dataset, policy version, and — importantly —
+`contains_raw_samples: false`.
+
+### Route 2 — let an agent query through MCP
+
+No file leaves your machine; the agent calls `preview_sanitized_data` and
+receives only policy-permitted rows (see [MCP](#mcp) below). Prefer this
+when you want an agent to *work with* the data rather than receive a
+one-off extract.
+
+### Choosing column actions
+
+| Goal | Action | Notes |
+|---|---|---|
+| Keep non-sensitive fields | `keep` | only for fields you've judged safe |
+| Keep shape, hide value | `mask` | `mask_keep_prefix/suffix` |
+| Remove entirely | `redact` | value replaced with `[REDACTED]` |
+| Reduce precision | `generalize` | `year`, `month`, `day`, `age_band_10`, `first_digit` |
+| Keep rows joinable | `tokenize` | keyed HMAC — **linkable, not anonymous** |
+| Replace with fake data | `synthetic` | best choice for anything identifying |
+| Exclude | `drop` | |
+
+A policy that shares data with an AI while keeping structure:
+
+```yaml
+sources:
+  analytics:
+    access: read
+    datasets: [public.orders]
+    columns:
+      order_id:     {action: tokenize}   # stable, non-reversible
+      customer_id:  {action: tokenize}   # keep joins working
+      customer_email: {action: synthetic}
+      customer_name:  {action: synthetic}
+      created_at:   {action: generalize, generalize_format: month}
+      total_amount: {action: keep}
+```
+
+Then allow the export destination explicitly — without this the export is
+denied, by design:
+
+```yaml
+export_allowed: true
+allowed_destinations: ["my-local-analysis"]
+```
+
+### Before you upload: four honest limits
+
+1. **`tokenize` is pseudonymization, not anonymization.** It is a keyed
+   HMAC, so it stays joinable *and* reverses if the key leaks. Use it for
+   identifiers you need to correlate, not for names or emails.
+2. **Synthetic data is not anonymous.** Generation learns from real
+   distributions, which can leak rare combinations. Reports say so
+   explicitly (ADR-005).
+3. **Unlisted columns block export.** Anything not in `columns:` defaults
+   to `manual_review` and is redacted — fail closed, never silent.
+4. **A sanitized export is still your data.** Review it. `qc sanitize
+   preview` shows exactly what would be shared, per row.
+
+Also remember that **a spreadsheet will execute formulas**: QC escapes
+leading `= + - @` by default (`--no-protect-formulas` disables it), and
+JSONL is the safer format for anything you might open elsewhere.
+
+### Sending it
+
+```bash
+# Prefer a local tool that never uploads, when one exists
+jq -s 'length' output/share.jsonl
+
+# Uploading is explicit and yours to make
+#   - attach only the sanitized file, never the manifest's source path
+#   - prefer a provider with "no training on my data" terms
+#   - delete the export when finished; it is still sensitive
+shred -u output/share.jsonl 2>/dev/null || rm -f output/share.jsonl
+```
+
 ## MCP
+
+QC exposes 11 bounded, policy-enforced tools to AI agents over **stdio**
+(local) or **Streamable HTTP** (remote).
 
 ```bash
 qc mcp                                   # stdio (local AI clients)
-qc mcp --transport http                  # requires auth config (see docs/mcp.md)
+qc mcp --transport http                  # requires auth config (see below)
 ```
 
 Tools: `list_sources`, `list_datasets`, `get_dataset_schema`,
@@ -304,6 +440,99 @@ Tools: `list_sources`, `list_datasets`, `get_dataset_schema`,
 
 **Not exposed in v1:** arbitrary SQL/Python, policy mutation, source
 writes, credential management, raw-row dumps.
+
+### Connecting an AI agent
+
+**stdio (recommended).** No port, no token, nothing listening. Point the
+client at the `qc` binary and tell it which project directory to run in —
+QC resolves `qc.toml`, policies, and sources relative to that working
+directory.
+
+```json
+{
+  "mcpServers": {
+    "qc": {
+      "command": "/absolute/path/to/qc/.venv/bin/qc",
+      "args": ["mcp"],
+      "env": { "SQLITE_QC": "/absolute/path/to/your/project/demo.db" }
+    }
+  }
+}
+```
+
+- **Claude Desktop** — Settings → Developer → Local MCP servers → add the
+  block above. `cwd` is not universally supported, so prefer an absolute
+  `command` path and pass the project location via `--root`:
+
+  ```json
+  {"command": "/abs/path/.venv/bin/qc", "args": ["mcp", "--root", "/abs/path/project"]}
+  ```
+
+- **Claude Code / Codex / Cursor** — same JSON, usually under a project
+  `.mcp.json` or a global MCP config file.
+- **fish/zsh users** — the client spawns the binary directly, so the
+  `source .venv/bin/activate` step does *not* apply. Use the absolute path
+  to `qc` as above.
+
+Because the secrets live in the environment, the child process inherits
+them only if you pass them in `env` — which means **the env values you
+write into a client config file are secret material**. Keep that file
+out of version control.
+
+**Streamable HTTP (remote/shared).** Refuses to start unless every guard
+holds, all verified:
+
+```toml
+[mcp.http]
+enabled = true
+host = "127.0.0.1"
+port = 8765
+require_auth = true
+auth_token_ref = "env:QC_MCP_HTTP_TOKEN"   # must resolve to >= 16 chars
+rate_limit_per_minute = 120
+max_request_bytes = 1048576
+```
+
+```bash
+export QC_MCP_HTTP_TOKEN='…'      # >= 16 chars, keep it in your keyring
+qc mcp --transport http
+```
+
+Unknown keys are **rejected**, not ignored — a typo such as
+`max_request_body_size` fails startup rather than silently leaving you
+without the limit you thought you set.
+
+Startup refuses, by design: `require_auth = false`, a missing
+`auth_token_ref`, a token shorter than 16 characters, or `enabled = false`.
+
+```bash
+# no token -> 401 ; wrong token -> 401 ; correct token -> 200
+curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp \
+  -H "Authorization: Bearer $QC_MCP_HTTP_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+       "protocolVersion":"2025-06-18","capabilities":{},
+       "clientInfo":{"name":"t","version":"0"}}}'
+```
+
+Keep it bound to `127.0.0.1` unless you intend remote access, and put TLS
+plus an OIDC gateway in front of it — the bearer token is a v1 stopgap
+(ADR-003).
+
+### What an agent can and cannot reach
+
+Every call is authorized against the active policy before any source read,
+so an agent cannot widen its own access:
+
+- unlisted sources/datasets → `POLICY_DENIED`;
+- unlisted columns → redacted;
+- tool arguments can only **narrow** budgets, never raise them;
+- inline rows are capped by `max_inline_mcp_rows` (default 20);
+- long-running tools return a `job_id` you can poll or `cancel_job`.
+
+Source text is treated as **data, never instructions** — a malicious value
+in a cell cannot make the agent run SQL or call a tool it wasn't given.
 
 ## Security defaults
 
@@ -328,6 +557,7 @@ writes, credential management, raw-row dumps.
 | [docs/synthetic-data.md](docs/synthetic-data.md) | strategies, fidelity, privacy limits |
 | [docs/mcp.md](docs/mcp.md) | transports, tools, auth, client setup |
 | [docs/operations.md](docs/operations.md) | deploy, log, upgrade, retain |
+| [tools/make_demo_db.py](tools/make_demo_db.py) | deterministic sample SQLite DB for trying the pipeline |
 | [docs/gaps.md](docs/gaps.md) | development gap assessment and resolutions |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
