@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from qc.domain.errors import InvalidArgumentsError
 
@@ -19,7 +19,14 @@ CONFIG_FILENAME = "qc.toml"
 CONFIG_VERSION = 1
 
 
-class BudgetConfig(BaseModel):
+# Unknown keys are rejected rather than ignored: a typo in a security or
+# budget key (``require_aut``, ``max_request_body_size``) would otherwise be
+# dropped silently and leave the operator believing a limit is in force.
+class _StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class BudgetConfig(_StrictModel):
     max_queries: int = Field(default=100, ge=0)
     max_rows: int = Field(default=100_000, ge=0)
     max_bytes: int = Field(default=67_108_864, ge=0)
@@ -28,7 +35,7 @@ class BudgetConfig(BaseModel):
     max_inline_mcp_bytes: int = Field(default=65_536, ge=0)
 
 
-class SecurityConfig(BaseModel):
+class SecurityConfig(_StrictModel):
     raw_sample_persistence: bool = False
     raw_mcp_rows: bool = False
     external_model_calls: bool = False
@@ -36,11 +43,11 @@ class SecurityConfig(BaseModel):
     redact_logs: bool = True
 
 
-class McpStdioConfig(BaseModel):
+class McpStdioConfig(_StrictModel):
     enabled: bool = True
 
 
-class McpHttpConfig(BaseModel):
+class McpHttpConfig(_StrictModel):
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
@@ -50,7 +57,7 @@ class McpHttpConfig(BaseModel):
     max_request_bytes: int = Field(default=1_048_576, ge=1)
 
 
-class AppConfig(BaseModel):
+class AppConfig(_StrictModel):
     """Validated application configuration (SPEC 13)."""
 
     version: int = CONFIG_VERSION

@@ -87,6 +87,34 @@ class TestLoadConfig:
         assert "secret" not in text
         assert "token" not in text
 
+    def test_rejects_unknown_budget_key(self, tmp_path: Path) -> None:
+        """A typo must fail loudly, not silently drop a limit."""
+        p = tmp_path / "qc.toml"
+        p.write_text("version = 1\n[budgets]\nmax_query = 10\n", encoding="utf-8")
+        with pytest.raises(InvalidArgumentsError):
+            load_config(p)
+
+    def test_rejects_unknown_security_key(self, tmp_path: Path) -> None:
+        p = tmp_path / "qc.toml"
+        p.write_text("version = 1\n[security]\nraw_mcp_row = false\n", encoding="utf-8")
+        with pytest.raises(InvalidArgumentsError):
+            load_config(p)
+
+    def test_rejects_unknown_mcp_http_key(self, tmp_path: Path) -> None:
+        """Regression: docs previously named this max_request_body_size."""
+        p = tmp_path / "qc.toml"
+        p.write_text("version = 1\n[mcp.http]\nmax_request_body_size = 1048576\n", encoding="utf-8")
+        with pytest.raises(InvalidArgumentsError):
+            load_config(p)
+
+    def test_accepts_correct_mcp_http_key(self, tmp_path: Path) -> None:
+        p = tmp_path / "qc.toml"
+        p.write_text(
+            "version = 1\n[mcp.http]\nenabled = false\nmax_request_bytes = 2048\n",
+            encoding="utf-8",
+        )
+        assert load_config(p).mcp_http.max_request_bytes == 2048
+
 
 class TestPaths:
     def test_layout(self, tmp_path: Path) -> None:

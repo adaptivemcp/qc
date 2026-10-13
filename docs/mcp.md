@@ -25,8 +25,12 @@ port = 8765
 require_auth = true
 auth_token_ref = "env:QC_MCP_HTTP_TOKEN"   # ≥16 chars
 rate_limit_per_minute = 120
-max_request_body_size = 1048576
+max_request_bytes = 1048576
 ```
+
+Unknown keys are rejected, not ignored: a typo such as
+`max_request_body_size` fails startup with `invalid configuration` rather
+than leaving you believing a limit is in force.
 
 ```bash
 export QC_MCP_HTTP_TOKEN='…'
