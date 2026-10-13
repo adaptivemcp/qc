@@ -128,6 +128,48 @@ class TestPromptInjection:
         assert "hunter2" not in msg
 
 
+class TestGeneralizeEdgeCases:
+    """Generalization must never crash on short/empty/nullish input.
+
+    Regression: ``first_digit`` indexed ``s[0]`` unguarded, so an empty
+    string in that column crashed the whole export with IndexError.
+    """
+
+    @pytest.mark.parametrize(
+        "fmt",
+        ["year", "month", "day", "first_digit", "age_band_10", "city", "unknown_format"],
+    )
+    @pytest.mark.parametrize("value", ["", "x", "7", "0000", None, "12345"])
+    def test_generalize_never_raises(self, fmt: str, value: object) -> None:
+        from qc.domain.enums import ColumnAction
+        from qc.domain.models import ColumnPolicy
+        from qc.sanitization.actions import transform_value
+
+        policy = ColumnPolicy(action=ColumnAction.GENERALIZE, generalize_format=fmt)
+        out = transform_value(value, policy, column="c")  # must not raise
+        assert out is None or isinstance(out, str)
+
+    def test_first_digit_empty_stays_empty(self) -> None:
+        """Empty in, empty out: redacting would invent a non-empty marker."""
+        from qc.domain.enums import ColumnAction
+        from qc.domain.models import ColumnPolicy
+        from qc.sanitization.actions import transform_value
+
+        policy = ColumnPolicy(action=ColumnAction.GENERALIZE, generalize_format="first_digit")
+        assert transform_value("", policy, column="c") == ""
+        assert transform_value("12345", policy, column="c") == "1****"
+
+    def test_first_digit_never_reveals_rest(self) -> None:
+        from qc.domain.enums import ColumnAction
+        from qc.domain.models import ColumnPolicy
+        from qc.sanitization.actions import transform_value
+
+        policy = ColumnPolicy(action=ColumnAction.GENERALIZE, generalize_format="first_digit")
+        out = transform_value("987654321", policy, column="c")
+        assert out is not None
+        assert "987654" not in str(out)  # only the first digit survives
+
+
 class TestPathTraversal:
     def test_profile_ref_rejected(self) -> None:
         from qc.artifacts.profiles import artifact_path

@@ -134,5 +134,7 @@ def _generalize(value: Any, policy: ColumnPolicy, *, column: str) -> Any:
     if fmt == "city":
         return REDACTED_MARKER  # generalization needs a lookup; fail closed
     if fmt == "first_digit":
-        return s[0] + "*" * max(len(s) - 1, 0)
+        # empty input stays empty, matching the month/day branches above:
+        # redacting it would invent a non-empty marker that never existed
+        return s[0] + "*" * max(len(s) - 1, 0) if s else s
     return REDACTED_MARKER
