@@ -30,6 +30,20 @@ jobs:
         # fixture, fake/bridge, and sqlite need no server, so they run here
         run: uv run pytest tests/contract -q -k "fixture or fake or bridge or sqlite"
 
+  e2e:
+    # End-to-end CLI journeys + the real MCP stdio server. No external services
+    # (the server is spawned locally), so this runs on every push/PR.
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --locked
+      - name: End-to-end tests
+        run: uv run pytest tests/e2e -q
+
   integration-db:
     runs-on: ubuntu-latest
     needs: checks
