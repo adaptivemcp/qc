@@ -176,7 +176,7 @@ def _register(server: Any, spec: Any, dispatch: dict[str, Any], guard: Any = Non
     handler.__name__ = spec.name
     handler.__doc__ = spec.description
     handler.__signature__ = _signature_for(input_model)  # type: ignore[attr-defined]
-    server.tool(name=spec.name, description=spec.description)(handler)
+    server.tool(name=spec.name, description=spec.description, annotations=spec.annotations)(handler)
 
 
 def _as_mcp_result(result: dict[str, Any]) -> Any:

@@ -227,6 +227,12 @@ class TestMcpStdio:
             # strict schemas: every tool has inputSchema with properties
             for t in tools:
                 assert t["inputSchema"]["type"] == "object"
+                # standard MCP annotations: explicitly non-destructive, and a
+                # read-only hint is always present (SPEC 12.2)
+                annotations = t.get("annotations") or {}
+                assert annotations.get("destructiveHint") is False
+                assert annotations.get("openWorldHint") is False
+                assert "readOnlyHint" in annotations
         finally:
             c.close()
 
