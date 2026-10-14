@@ -64,6 +64,13 @@ poll `get_job_status` and call `cancel_job`. Cancellation is cooperative:
 the job stops between probes/rows, closes its cursor/connection, and the
 job record ends `cancelled` (SPEC 12.6).
 
+Every tool also carries standard MCP **annotations**: `destructiveHint: false`
+and `openWorldHint: false` (QC never mutates sources and access is
+policy-bounded), and a `readOnlyHint` — `true` for the pure reads, `false` for
+`profile_dataset` / `generate_synthetic_data` (they persist an artifact) and
+`cancel_job`. They are set explicitly because MCP defaults `destructiveHint` to
+`true` when omitted, which would make every tool look destructive to a host.
+
 ### Explicitly excluded (SPEC 12.3)
 
 Arbitrary SQL, arbitrary Python, policy mutation, source/credential

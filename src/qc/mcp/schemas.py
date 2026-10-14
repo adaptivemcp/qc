@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from qc import TOOL_VERSION
@@ -123,6 +124,8 @@ class ToolSpec(BaseModel):
     name: str
     description: str
     input_model: type[BaseModel]
+    #: Standard MCP tool annotations (SPEC 12.2). Set for every tool below.
+    annotations: ToolAnnotations | None = None
     # MCP tools excluded from v1 (SPEC 12.3): arbitrary SQL/Python,
     # policy mutation, source creation, writes, public URL export,
     # unrestricted raw rows. Nothing below offers any of those.
@@ -208,6 +211,39 @@ TOOL_SPECS: list[ToolSpec] = [
         input_model=GetPolicySummaryInput,
     ),
 ]
+
+_READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+_ARTIFACT_WRITER = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+)
+_JOB_CONTROL = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+
+#: Annotations per tool. QC never mutates sources and never reaches the open
+#: world directly (access is policy-bounded), so `destructiveHint`/`openWorldHint`
+#: are false everywhere — and set *explicitly*, because MCP defaults
+#: `destructiveHint` to true when omitted. `profile_dataset` and
+#: `generate_synthetic_data` persist an artifact, so they are not read-only.
+TOOL_ANNOTATIONS: dict[str, ToolAnnotations] = {
+    "list_sources": _READ_ONLY,
+    "list_datasets": _READ_ONLY,
+    "get_dataset_schema": _READ_ONLY,
+    "profile_dataset": _ARTIFACT_WRITER,
+    "get_profile": _READ_ONLY,
+    "preview_sanitized_data": _READ_ONLY,
+    "generate_synthetic_data": _ARTIFACT_WRITER,
+    "validate_synthetic_data": _READ_ONLY,
+    "get_job_status": _READ_ONLY,
+    "cancel_job": _JOB_CONTROL,
+    "get_policy_summary": _READ_ONLY,
+}
+
+for _spec in TOOL_SPECS:
+    _spec.annotations = TOOL_ANNOTATIONS[_spec.name]
+assert {spec.name for spec in TOOL_SPECS} == set(TOOL_ANNOTATIONS), "annotations cover every tool"
 
 #: v1 exclusions, surfaced in error messages when clients probe (SPEC 12.3)
 EXCLUDED_TOOLS: dict[str, str] = {
