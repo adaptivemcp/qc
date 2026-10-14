@@ -7,6 +7,7 @@ authentication and is denied unless explicitly enabled in config.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -162,7 +163,7 @@ def _register(server: Any, spec: Any, dispatch: dict[str, Any], guard: Any = Non
     """Register one tool with a strict schema derived from its model."""
     input_model = spec.input_model
 
-    async def handler(**kwargs: Any) -> dict[str, Any]:
+    async def handler(**kwargs: Any) -> Any:
         import asyncio
 
         def call() -> dict[str, Any]:
@@ -170,12 +171,32 @@ def _register(server: Any, spec: Any, dispatch: dict[str, Any], guard: Any = Non
                 guard(spec.name)
             return call_tool(dispatch, spec.name, kwargs)
 
-        return await asyncio.to_thread(call)
+        return _as_mcp_result(await asyncio.to_thread(call))
 
     handler.__name__ = spec.name
     handler.__doc__ = spec.description
     handler.__signature__ = _signature_for(input_model)  # type: ignore[attr-defined]
     server.tool(name=spec.name, description=spec.description)(handler)
+
+
+def _as_mcp_result(result: dict[str, Any]) -> Any:
+    """Return a protocol-native error for an error envelope.
+
+    QC keeps its structured envelope (stable ``error`` code + message), but a
+    policy denial / budget cap / validation failure is a *tool-execution error*
+    per MCP, not a success. Returning a ``CallToolResult`` with ``isError=True``
+    (and the same envelope as ``structuredContent``) means standard MCP clients
+    treat it as a failure, instead of having to sniff an in-band ``status``.
+    """
+    if result.get("status") != "error":
+        return result
+    from mcp.types import CallToolResult, TextContent
+
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(result, indent=2))],
+        structuredContent=result,
+        isError=True,
+    )
 
 
 def _signature_for(model: Any) -> Any:

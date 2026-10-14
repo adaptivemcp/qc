@@ -89,6 +89,13 @@ Errors use stable codes: `POLICY_DENIED`, `BUDGET_EXCEEDED`,
 contains secrets, raw values, internal network details, or unapproved
 schema (validation errors report field *paths* only).
 
+An error envelope is returned as a **protocol-level MCP error**: the tool
+result carries `isError: true` with the same envelope as its
+`structuredContent` (and a JSON text rendering). Standard MCP clients
+therefore treat a policy denial / budget cap / validation failure as a
+failed tool call, while non-MCP consumers and the structured payload keep
+the stable `error` code and message.
+
 ## Enforcement model
 
 1. **Schema** — inputs validated against strict Pydantic-derived JSON
