@@ -4,6 +4,40 @@ A systematic review of the implementation against `SPEC.md`, the gaps
 found, and their resolution. Each item lists the spec reference, the gap,
 and the fix with its tests.
 
+This document is **point-in-time**: "Addressed in this pass" records one
+review pass, not a live tracker. New drift is caught by the recurring
+cadence below rather than by trusting this list to stay current.
+
+## Review cadence
+
+A lightweight pass runs **at each milestone and before any release**, not
+on a fixed clock (there is no separate reviewer, so a time-based cadence
+would just go stale). Steps:
+
+1. **Diff against the spec.** Walk the `SPEC.md` sections the code has
+   touched since the last pass; the spec is the source of truth, and the
+   implementation must meet it or explicitly defer.
+2. **Re-validate the exclusions.** Re-read the "Deliberately out of scope"
+   table and confirm each row still holds — a new caller, a dependency
+   release, or a changed constraint can retire one.
+3. **Record new items.** Append dated sections under "Addressed in this
+   pass" using the template below; keep the spec reference in the heading.
+4. **Pin the fix.** Run the full suite (`uv run pytest`) and name the
+   covering tests in the item's "Tests." line so the claim is checkable.
+
+### Item template
+
+```markdown
+### N. <one-line gap> — SPEC <refs>
+
+**Gap.** What the spec requires and what was actually missing or deviant.
+
+**Fix.** The change, naming the files/modules that carry it (and the ADR,
+if the fix encodes a decision).
+
+**Tests.** The test file(s) and cases that pin the behavior.
+```
+
 ## Addressed in this pass
 
 ### 1. Cancellation was declared but non-functional — SPEC 4.3, 6.1, 12.6, 15
