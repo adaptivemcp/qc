@@ -156,10 +156,25 @@ A suggestion to confirm a call is only meaningful if the risk agrees, so every
   `capabilities.experimental` needs FastMCP to expose
   `experimental_capabilities` (it does not yet); see `docs/gaps.md`.
 
-Planned for a later version: the read-only `qc://profiles/{profile_id}`,
-`qc://jobs/{job_id}`, `qc://policies/{policy_id}/summary` resources, enforcing
-the same authorization as tools. Prompt templates are convenience only;
-server-side enforcement is authoritative.
+### Decided (2026-10-15): no `qc://` resources, no prompt templates
+
+Both are **declined for now** — a decision, not a plan:
+
+- The three read-only resources (`qc://profiles/{profile_id}`,
+  `qc://jobs/{job_id}`, `qc://policies/{policy_id}/summary`) would each
+  duplicate a tool that already returns the same data (`get_profile`,
+  `get_job_status`, `get_policy_summary`). SPEC 12.5 requires a resource to
+  enforce the same authorization as tools, so each is a second surface to
+  authorize and audit, for a consumption model no client we know of uses — the
+  adaptive host reads resources for the well-known
+  `dev.adaptivemcp://tools-metadata` URI, and everything else calls a tool.
+- Prompt templates are model-facing text. QC's guidance already lives in the
+  tool descriptions and the server `instructions`; a template that walks an
+  agent through profiling buys nothing the tools do not, and adds an authored
+  text surface to a policy-enforcing server for no enforcement benefit.
+
+**Revisit when** a client has a concrete need — a host that prefetches a profile
+without issuing a tool call, say — and not before.
 
 ## Client setup examples
 
