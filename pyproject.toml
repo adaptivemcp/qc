@@ -1,10 +1,11 @@
 [project]
-name = "qc"
+name = "querycleaner"
 version = "0.1.0"
 description = "QueryCleaner/QC - local-first data profiling, sanitization, and synthetic data generation with CLI and MCP interfaces"
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "QC Contributors" }]
 keywords = ["data-profiling", "synthetic-data", "privacy", "mcp", "sanitization"]
 classifiers = [
@@ -29,7 +30,7 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]
 mysql = ["mysql-connector-python>=9,<10"]
-all = ["qc[postgres]", "qc[mysql]"]
+all = ["querycleaner[postgres]", "querycleaner[mysql]"]
 
 [project.scripts]
 qc = "qc.cli.app:main"
