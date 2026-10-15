@@ -149,9 +149,41 @@ qc source add mc --type maxcompute --connection-ref env:QC_MCP_JDBC_URL \
   contract-tested before use.
 - Partition filters/scan-budget warnings: configurable via source
   options; oversized scans require explicit approval.
-- **Open before GA (ADR-006):** verify current official driver version,
-  supported Java runtime, auth modes, and SQL dialect; pin version +
-  SHA-256 in `driver-lock.json` (sidecar refuses to start on mismatch).
+
+### Release gate — live driver/dialect verification (ADR-006)
+
+**Status: not yet done; this is an open release gate, not a defect.** The
+bridge protocol is contract-tested against a fake sidecar, but no live
+MaxCompute cluster has been driven. `driver-lock.json` still carries
+placeholders (`REPLACE_WITH_PINNED_VERSION` /
+`REPLACE_WITH_64_CHAR_SHA256_OF_DRIVER_JAR`), so a release cannot ship the
+sidecar enabled until it is filled from a verified run.
+
+**Risk if shipped unverified.** The failure modes are exactly the ones a
+fake sidecar cannot reproduce: a driver version whose dialect rejects the
+portable `ORDER BY/LIMIT/OFFSET` sampling, an auth mode that ignores the
+inherited-env credentials, a Java runtime the jar does not support, or a
+checksum that never matched the official artifact. Each would surface as a
+runtime failure on a user's cluster, so the gate stays closed.
+
+**Reproducible verification (run by someone with cluster access):**
+
+1. Fetch the current official MaxCompute JDBC driver; record its version.
+2. `sha256sum odps-jdbc-driver.jar` and write both into
+   `driver-lock.json` (`version`, `sha256`).
+3. Build the sidecar per `src/qc/jdbc_bridge/sidecar/BUILD.md` (Java 17+).
+4. Exercise the auth modes in use (AK / STS / RAM role) against a test
+   project and confirm the handshake succeeds.
+5. Probe the dialect the bridge depends on: `SELECT`, `WITH`, scalar
+   parameter binding, `ORDER BY`/`LIMIT`/`OFFSET` sampling, and
+   `job.cancel` on a long query.
+6. Run the opt-in suite and record the result:
+   `QC_TEST_MAXCOMPUTE_DSN=… uv run pytest tests/integration -m integration -k maxcompute`
+
+**"Recorded" means** a dated entry (in the release notes or this section)
+naming the driver version + SHA-256, the Java runtime, the auth mode(s)
+exercised, and the dialect probe results — enough that a later reader can
+tell whether the gate was actually verified or merely asserted.
 
 ## Google Sheets
 
