@@ -14,6 +14,98 @@ Container image for remote MCP is a release deliverable (ADR/§19.10);
 until then run the wheel in your own image with a read-only filesystem
 except `state_dir`.
 
+## Remote MCP identity (OIDC)
+
+The v1 bearer (`StaticTokenVerifier`, ADR-003) is **authentication, not
+identity**: it proves the caller holds a shared token, says nothing about
+*who* they are, and every client presents the same secret. Beyond a single
+trusted operator, put real identity in front of remote MCP. Two paths, one
+designed and one deployable today.
+
+### Designed path — QC as an OAuth resource server
+
+Treat `qc mcp --transport http` as an OAuth 2.1 **resource server** for MCP
+(the MCP authorization model): clients obtain an access token from an
+identity provider and present it; QC validates it locally against the
+provider's keys. No shared secret, and each token is bound to a user and an
+audience.
+
+Validation, per request:
+
+1. **Signature** — verify the token (RS256/ES256) against the provider's
+   JWKS, fetched from `/.well-known/jwks.json` and cached.
+2. **Claims** — `iss` equals the configured issuer; `aud` equals QC's
+   resource URL (audience binding: a token minted for another service must
+   not open QC); `exp`/`nbf` are current.
+3. **Scopes** — a required scope (e.g. `qc:mcp`) must be present; missing
+   scope is `AuthError`, not a tool-level denial.
+
+This is currently *stubbed*, not missing: `build_server_http`
+(`src/qc/mcp/server.py`) already wires a `token_verifier` and
+`AuthSettings`, but with `issuer_url` pointing at QC itself and
+`validate_token_resource=False`, i.e. the token verifier is the only check.
+The change is to select the verifier and fill `AuthSettings` from config:
+
+```python
+# src/qc/mcp/server.py — sketched delta, not yet implemented
+if cfg.oidc is not None:
+    verifier = JwtTokenVerifier(          # new: JWKS + iss/aud/exp/scope checks
+        issuer=cfg.oidc.issuer_url,
+        audience=cfg.oidc.audience,       # == QC's public resource URL
+        required_scopes=cfg.oidc.required_scopes,
+    )
+    auth = AuthSettings(
+        issuer_url=AnyHttpUrl(cfg.oidc.issuer_url),
+        resource_server_url=AnyHttpUrl(cfg.oidc.audience),
+        validate_token_resource=True,
+    )
+else:
+    verifier = StaticTokenVerifier(resolve_secret(cfg.auth_token_ref))
+    auth = AuthSettings(issuer_url=AnyHttpUrl(f"http://{cfg.host}:{cfg.port}"))
+```
+
+Config (`qc.toml`), alongside the existing `[mcp.http]` keys:
+
+```toml
+[mcp.http]
+enabled = true
+host = "127.0.0.1"
+port = 8787
+# static mode (today): auth_token_ref = "env:QC_MCP_HTTP_TOKEN"
+mode = "oidc"                       # "static" | "oidc"
+
+[mcp.http.oidc]
+issuer_url = "https://idp.example.com"
+audience = "https://qc.example.com" # this server's public URL
+required_scopes = ["qc:mcp"]
+```
+
+Adding a JWT verify dependency is the cost; it is isolated to the server
+module. `StaticTokenVerifier` stays for local and single-operator setups —
+the mode is explicit, so an unconfigured deployment keeps behaving exactly
+as it does today.
+
+### Deployable today — OIDC gateway in front
+
+Until the resource-server path lands, terminate identity at a gateway and
+keep QC on the static bearer:
+
+```
+MCP client ──(OIDC token)──▶ OIDC gateway ──(QC bearer)──▶ qc mcp (127.0.0.1:8787)
+                                   │
+                                   └─ discovery + JWKS ─▶ identity provider
+```
+
+The gateway (your existing OIDC reverse proxy: Envoy, oauth2-proxy, a
+cloud API gateway, …) is the resource server: it validates the client's
+token against the provider's JWKS and then presents QC's bearer on the
+upstream hop. QC keeps binding `127.0.0.1`, so only the gateway reaches it,
+and the per-client rate limit and source allowlist still apply at QC.
+Known limitation: the QC hop still uses one shared credential, so the
+gateway must be the only route in and must not forward arbitrary clients'
+`Authorization` through verbatim. That limitation is what the resource-server
+path removes.
+
 ## Configuration
 
 `qc.toml` (validated at startup; unknown schema versions fail):
