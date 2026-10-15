@@ -148,4 +148,4 @@ secret substring was absent; when the secret equalled a keyword
 | MCP resources / prompt templates | 12.5 | `dev.adaptivemcp://tools-metadata` is published; `qc://` resources and prompt templates declined 2026-10-15 (each duplicates a tool and adds a second surface to authorize) — revisit on concrete client demand |
 | `capabilities.experimental` advertisement of the extension | 12.5, SEP-2133 | the resource is discoverable via `resources/list`; FastMCP does not expose `experimental_capabilities` yet |
 | Live MaxCompute driver/dialect verification | 6.4, ADR-006 | protocol tested; live confirmation is a release gate |
-| Project rename / public package name | 19.1 | release gate (ADR-001) |
+| Project rename / public package name | 19.1 | resolved 2026-10-16: product **QueryCleaner**, distribution **`querycleaner`**, import/CLI **`qc`**; license Apache-2.0 (ADR-001) |

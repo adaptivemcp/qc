@@ -1,7 +1,5 @@
 # QueryCleaner/QC
 
-**Working name — rename before public release** (ADR-001).
-
 Local-first data profiling, sanitization, and synthetic data generation
 with a consistent **CLI (`qc`)** and **MCP server** interface. QC learns
 data behavior through bounded, inspectable evidence, enforces privacy
@@ -31,6 +29,15 @@ validates the result, and makes every important decision traceable.
   with 11 narrow, bounded, policy-enforced tools.
 
 ## Quickstart
+
+QC is distributed as the **`querycleaner`** package (the `qc` name is taken
+on PyPI); the import package and CLI are both `qc`.
+
+```bash
+uv tool install querycleaner   # end users; or: pipx install querycleaner
+```
+
+For development from a checkout:
 
 ```bash
 uv sync
@@ -591,4 +598,4 @@ denied, `5` budget/cancelled, `6` source error, `7` validation failure,
 
 ## License
 
-Apache-2.0 (pending dependency and organizational review — ADR-001).
+Apache-2.0 — see [LICENSE](LICENSE).

@@ -3,8 +3,8 @@ revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
-    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform != 'win32'",
+    "python_full_version == '3.14.*' and sys_platform == 'win32'",
     "python_full_version == '3.14.*' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform != 'win32'",
@@ -1014,7 +1014,7 @@ wheels = [
 ]
 
 [[package]]
-name = "qc"
+name = "querycleaner"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -1060,8 +1060,8 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
-    { name = "qc", extras = ["mysql"], marker = "extra == 'all'" },
-    { name = "qc", extras = ["postgres"], marker = "extra == 'all'" },
+    { name = "querycleaner", extras = ["mysql"], marker = "extra == 'all'" },
+    { name = "querycleaner", extras = ["postgres"], marker = "extra == 'all'" },
     { name = "typer", specifier = ">=0.12,<1" },
     { name = "typing-extensions", specifier = ">=4.12,<5" },
 ]
