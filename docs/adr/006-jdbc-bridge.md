@@ -24,6 +24,24 @@ bridge contract freezes.
   official documentation before GA (open item; sidecar code isolates this
   behind `MaxComputeConnector`).
 
+## Live verification status
+
+**Open release gate (2026-10-16).** No live MaxCompute cluster has been
+driven; `driver-lock.json` still holds placeholders. The bridge protocol
+is contract-tested against a fake sidecar, and the sidecar refuses to
+start on a missing/mismatched lock, so an unverified build cannot ship the
+sidecar enabled by accident. The gate is kept closed deliberately: the
+failure modes (dialect rejection of portable sampling, an auth mode that
+ignores inherited-env credentials, an unsupported Java runtime, an
+unmatched checksum) are invisible to a fake sidecar and would surface only
+on a user's cluster.
+
+A reproducible verification checklist (fetch + pin the driver, build the
+sidecar, exercise auth modes, probe the dialect, run the opt-in suite, and
+record the result) lives in `docs/connectors.md` § "Release gate — live
+driver/dialect verification". The gate is satisfied by a dated record, not
+by assertion.
+
 ## Consequences
 
 - Python-side bridge contract tests run against a scripted fake sidecar;
