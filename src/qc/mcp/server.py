@@ -14,11 +14,25 @@ from mcp.server.fastmcp import FastMCP
 
 from qc.application.runtime import Runtime
 from qc.domain.errors import AuthError, InvalidArgumentsError
+from qc.mcp.metadata import register_tools_metadata
 from qc.mcp.schemas import TOOL_SPECS
 from qc.mcp.service import QCService, build_dispatch, call_tool
 from qc.observability.logging import get_logger, setup_logging
 
 log = get_logger("mcp.transport")
+
+#: Shared by both transports. Budgets are named here because the
+#: ``tools-metadata`` document deliberately carries none (its ``budget`` field
+#: is a *cost* the client spends against; QC's ceilings are time/row/query, see
+#: qc.mcp.metadata).
+INSTRUCTIONS = (
+    "QueryCleaner/QC exposes bounded, policy-enforced data profiling and "
+    "synthetic generation tools. Raw source rows are denied by default. All "
+    "operations are budgeted (time/rows/queries, enforced server-side) and "
+    "audited; server policy cannot be modified through tools. Adaptive hosts "
+    "may read the resource dev.adaptivemcp://tools-metadata for advisory "
+    "per-tool risk, ownership and approval suggestions."
+)
 
 
 def run_stdio(runtime: Runtime) -> None:
@@ -104,11 +118,7 @@ def build_server_http(runtime: Runtime, token: str, cfg: Any) -> Any:
 
     server = FastMCP(
         name="qc",
-        instructions=(
-            "QueryCleaner/QC exposes bounded, policy-enforced data "
-            "profiling and synthetic generation tools. Raw source rows "
-            "are denied by default."
-        ),
+        instructions=INSTRUCTIONS,
         token_verifier=StaticTokenVerifier(token),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(f"http://{cfg.host}:{cfg.port}"),
@@ -123,6 +133,7 @@ def build_server_http(runtime: Runtime, token: str, cfg: Any) -> Any:
     rate_limited_guard = _rate_limit_guard(hits, window, limit)
     for spec in specs:
         _register(server, spec, dispatch, guard=rate_limited_guard)
+    register_tools_metadata(server)
     return server
 
 
@@ -145,17 +156,12 @@ def build_server(runtime: Runtime, *, transport: str = "mcp-stdio") -> Any:
     """Build a FastMCP server exposing exactly the v1 tool set."""
     service = QCService(runtime, transport=transport)
     dispatch = build_dispatch(service)
-    server = FastMCP(
-        name="qc",
-        instructions=(
-            "QueryCleaner/QC exposes bounded, policy-enforced data "
-            "profiling and synthetic generation tools. Raw source rows "
-            "are denied by default. All operations are budgeted and "
-            "audited; server policy cannot be modified through tools."
-        ),
-    )
+    server = FastMCP(name="qc", instructions=INSTRUCTIONS)
     for spec in TOOL_SPECS:
         _register(server, spec, dispatch)
+    # Advisory adaptive policy, for hosts that read it (SEP-2133). Optional by
+    # design: nothing in QC's own enforcement depends on a client seeing it.
+    register_tools_metadata(server)
     return server
 
 

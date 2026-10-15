@@ -154,6 +154,12 @@ class StdioClient:
     def list_tools(self) -> list[dict[str, Any]]:
         return self.request("tools/list")["result"]["tools"]
 
+    def list_resources(self) -> list[dict[str, Any]]:
+        return self.request("resources/list")["result"]["resources"]
+
+    def read_resource(self, uri: str) -> list[dict[str, Any]]:
+        return self.request("resources/read", {"uri": uri})["result"]["contents"]
+
     def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         resp = self.request("tools/call", {"name": name, "arguments": arguments})
         return _payload(resp)
@@ -233,6 +239,35 @@ class TestMcpStdio:
                 assert annotations.get("destructiveHint") is False
                 assert annotations.get("openWorldHint") is False
                 assert "readOnlyHint" in annotations
+        finally:
+            c.close()
+
+    def test_publishes_adaptive_tools_metadata_resource(self, mcp_project: Path) -> None:
+        """Adaptive hosts read the advisory policy from an ordinary MCP
+        resource (SEP-2133); a client that never reads it sees no difference."""
+        import yaml
+
+        from qc.mcp.metadata import TOOLS_METADATA_MIME, TOOLS_METADATA_URI
+
+        c = StdioClient(mcp_project)
+        try:
+            c.initialize()
+            resources = c.list_resources()
+            assert [r["uri"] for r in resources] == [TOOLS_METADATA_URI]
+            assert resources[0]["mimeType"] == TOOLS_METADATA_MIME
+            assert resources[0]["name"] == "tools-metadata"
+
+            contents = c.read_resource(TOOLS_METADATA_URI)
+            assert [item["mimeType"] for item in contents] == [TOOLS_METADATA_MIME]
+            doc = yaml.safe_load(contents[0]["text"])
+            # The names match tools/list exactly: a host maps them onto its
+            # own (possibly namespaced) tool names.
+            assert {t["name"] for t in doc["tools"]} == TOOL_NAMES
+            high = {t["name"] for t in doc["tools"] if t["annotation"]["risk"] == "high"}
+            assert high == {"preview_sanitized_data", "generate_synthetic_data"}
+            # Nothing learned about the client is published back at it.
+            for tool in doc["tools"]:
+                assert "stats" not in tool and "insights" not in tool
         finally:
             c.close()
 
