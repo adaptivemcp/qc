@@ -120,10 +120,46 @@ the stable `error` code and message.
 
 ## Resources and prompts
 
-Read-only resources are planned as `qc://profiles/{id}`,
-`qc://jobs/{id}`, `qc://policies/{id}/summary`, enforcing the same
-authorization as tools (not enabled in v1). Prompt templates are
-convenience only; server-side enforcement is authoritative.
+QC publishes one **resource**, for adaptive hosts:
+
+| URI | MIME | Purpose |
+| --- | --- | --- |
+| `dev.adaptivemcp://tools-metadata` | `application/yaml` | Advisory per-tool policy: risk, owner, tags, `require_approval` |
+
+This is the `dev.adaptivemcp/tools-metadata` extension (SEP-2133): a static,
+server-authored document. A client that ignores it sees no difference, and
+nothing in QC's enforcement depends on a client reading it. Each entry names a
+tool exactly as `tools/list` does, so a host maps it onto its own (possibly
+namespaced) names.
+
+| Tool | risk | require_approval | Why |
+| --- | --- | --- | --- |
+| `preview_sanitized_data` | high | yes | The only call that lets rows leave QC. Sanitized, but disclosure is not reversible. |
+| `generate_synthetic_data` | high | yes | Writes a new dataset artifact derived from source data. |
+| `profile_dataset`, `cancel_job` | medium | no | Consumes budget / stops work; both bounded and enforced inside QC. |
+| everything else | low | no | Pure reads. |
+
+A suggestion to confirm a call is only meaningful if the risk agrees, so every
+`require_approval` tool is also `high`.
+
+- **No learned data.** `insights`/`stats` describe what a *client* observed;
+  QC never sees tool usage, and publishes nothing back at a client. A host
+  folds its own observations in itself.
+- **No budgets.** The extension's `budget` is a *cost* the client spends
+  against; QC's ceilings are time/row/query, enforced inside QC. A number in
+  the client's unit would be fiction, so the ceilings are stated in the server
+  `instructions` instead.
+- **YAML only.** `application/yaml` is what adaptive clients parse today; JSON
+  content negotiation arrives when a client asks for it.
+- **Advertised by existence.** Discoverable through `resources/list` at the
+  well-known URI. Putting the extension identifier in
+  `capabilities.experimental` needs FastMCP to expose
+  `experimental_capabilities` (it does not yet); see `docs/gaps.md`.
+
+Planned for a later version: the read-only `qc://profiles/{profile_id}`,
+`qc://jobs/{job_id}`, `qc://policies/{policy_id}/summary` resources, enforcing
+the same authorization as tools. Prompt templates are convenience only;
+server-side enforcement is authoritative.
 
 ## Client setup examples
 

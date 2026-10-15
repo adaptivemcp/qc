@@ -1152,8 +1152,17 @@ details.
 
 ### 12.5 MCP resources and prompts
 
-Optional read-only resources: - `qc://profiles/{profile_id}` -
-`qc://jobs/{job_id}` - `qc://policies/{policy_id}/summary`
+QC publishes one resource: the adaptive policy document
+`dev.adaptivemcp://tools-metadata` (`application/yaml`), from the MCP
+`tools-metadata` extension (SEP-2133). It carries per-tool *suggestions*
+(risk, owner, tags, `require_approval`) authored by QC. It is advisory:
+static, free of learned client data and budgets, and clients that ignore
+it are unaffected. QC never learns from it and cannot be reconfigured
+through it.
+
+Optional read-only resources (planned, not enabled in v1):
+`qc://profiles/{profile_id}`, `qc://jobs/{job_id}`,
+`qc://policies/{policy_id}/summary`.
 
 Resources must enforce the same authorization and disclosure policy as
 tools. Avoid embedding sensitive values in resource URIs.
