@@ -1160,16 +1160,17 @@ static, free of learned client data and budgets, and clients that ignore
 it are unaffected. QC never learns from it and cannot be reconfigured
 through it.
 
-Optional read-only resources (planned, not enabled in v1):
+Decision (2026-10-15): the optional read-only resources
 `qc://profiles/{profile_id}`, `qc://jobs/{job_id}`,
-`qc://policies/{policy_id}/summary`.
+`qc://policies/{policy_id}/summary`, and optional prompt templates, are
+declined for now. Each resource would duplicate a tool that already returns the
+same data while adding a second surface to authorize (below); a prompt template
+would restate guidance that already lives in tool descriptions and server
+instructions. Revisit when a client has a concrete need.
 
 Resources must enforce the same authorization and disclosure policy as
-tools. Avoid embedding sensitive values in resource URIs.
-
-Optional prompt templates may guide an agent through profiling,
-reviewing a sanitization plan, and validating synthetic data. Prompts
-are convenience only; server-side enforcement remains authoritative.
+tools. Avoid embedding sensitive values in resource URIs. Server-side
+enforcement remains authoritative regardless of client-facing conveniences.
 
 ### 12.6 MCP security
 
