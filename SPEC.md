@@ -2,7 +2,7 @@
 
 ## 1. Project summary
 
-**Working name:** QueryCleaner/QC (placeholder; rename before public release)
+**Name:** QueryCleaner/QC — distributed on PyPI as **`querycleaner`**; import package and CLI are **`qc`** (ADR-001).
 
 **Purpose:** Build a local-first data profiling, sanitization, and
 synthetic-data generation system that exposes a consistent CLI and MCP
