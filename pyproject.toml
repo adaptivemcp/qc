@@ -1,6 +1,6 @@
 [project]
 name = "querycleaner"
-version = "0.1.0"
+version = "0.2.0"
 description = "QueryCleaner/QC - local-first data profiling, sanitization, and synthetic data generation with CLI and MCP interfaces"
 readme = "README.md"
 requires-python = ">=3.12"
