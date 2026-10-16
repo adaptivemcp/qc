@@ -863,7 +863,7 @@ def sanitize_export(
     dataset: str,
     policy: str = typer.Option(..., "--policy"),
     output: Path = typer.Option(..., "--output", help="Output file path"),
-    format: str = typer.Option("jsonl", "--format", help="jsonl|csv"),
+    format: str = typer.Option("jsonl", "--format", help="jsonl|csv|parquet"),
     limit: int | None = typer.Option(None, "--limit"),
     columns: Annotated[
         list[str], typer.Option("--column", "--columns", help="Restrict output columns")

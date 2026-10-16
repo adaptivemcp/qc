@@ -190,7 +190,7 @@ async def export_rows(
         raise PolicyDeniedError(
             f"policy '{policy_name}' does not allow export (export_allowed=false)"
         )
-    if fmt not in ("jsonl", "csv"):
+    if fmt not in ("jsonl", "csv", "parquet"):
         raise ValidationError(f"unsupported export format: {fmt}")
 
     effective_limit = limit or engine.policy.budget.max_rows
@@ -215,6 +215,8 @@ async def export_rows(
         output.parent.mkdir(parents=True, exist_ok=True)
         if fmt == "jsonl":
             _write_jsonl(output, rows)
+        elif fmt == "parquet":
+            _write_parquet(output, rows)
         else:
             _write_csv(output, rows, **csv_opts)
         if write_manifest:
@@ -269,6 +271,13 @@ def _write_csv(path: Path, rows: list[dict[str, Any]], **options: Any) -> None:
     from qc.exports.csv_writer import write_csv_rows
 
     write_csv_rows(path, rows, **options)
+
+
+def _write_parquet(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Parquet export with profile-derived column types (optional extra)."""
+    from qc.exports.parquet import write_parquet
+
+    write_parquet(path, rows)
 
 
 def _write_manifest(

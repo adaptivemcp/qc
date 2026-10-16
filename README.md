@@ -23,7 +23,8 @@ validates the result, and makes every important decision traceable.
   `manual_review` — deny-by-default.
 - **Generate** synthetic data with seeded reproducibility and validated
   fidelity (hard constraints vs soft tolerances reported separately).
-- **Export** JSONL/CSV (null encoding + formula-injection protection) or
+- **Export** JSONL / CSV / Parquet (null encoding + formula-injection protection;
+  Parquet is behind the `parquet` extra) or
   an approved destination database, with provenance manifests.
 - **Serve** AI clients over MCP (stdio or authenticated Streamable HTTP)
   with 11 narrow, bounded, policy-enforced tools.
