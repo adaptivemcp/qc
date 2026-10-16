@@ -84,6 +84,10 @@ ignore = ["E501"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
+# Scope: the package, deliberately — the tests are not checked today. Measured
+# `mypy tests` at 68 errors (mostly missing annotations in fixtures and bare
+# `dict`): real, but annotation grind rather than defects, and worth doing on
+# purpose with test-scoped relaxations rather than by surprise.
 packages = ["qc"]
 exclude = ["qc/jdbc_bridge/sidecar"]
 
