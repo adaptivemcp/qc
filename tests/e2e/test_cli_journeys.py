@@ -84,6 +84,10 @@ class TestJourneyProfile:
         assert "password" not in text and "token" not in text
         doc = run_qc(root, "doctor")
         assert "python" in doc.stdout
+        # optional extras are reported up front, so "not installed" never
+        # surprises someone mid-resolution
+        assert "extra:keyring" in doc.stdout
+        assert "extra:parquet" in doc.stdout
 
     def test_init_twice_fails_with_exit_2(self, tmp_path: Path) -> None:
         root = tmp_path / "twice"
