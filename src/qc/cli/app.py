@@ -26,9 +26,33 @@ app = typer.Typer(
     name="qc",
     help="QueryCleaner/QC: profile, sanitize, and generate data with policy enforcement.",
     no_args_is_help=True,
-    add_completion=False,
+    add_completion=True,
     pretty_exceptions_enable=False,
 )
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        typer.echo(TOOL_VERSION)
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_print_version,
+            is_eager=True,
+            help="Print the version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """QueryCleaner/QC: profile, sanitize, and generate data with policy enforcement."""
+
+
 source_app = typer.Typer(help="Manage data sources.", no_args_is_help=True)
 dataset_app = typer.Typer(help="Explore datasets.", no_args_is_help=True)
 profile_app = typer.Typer(help="Run and inspect profiles.", no_args_is_help=True)
