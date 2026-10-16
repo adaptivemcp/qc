@@ -30,6 +30,20 @@ jobs:
         # fixture, fake/bridge, and sqlite need no server, so they run here
         run: uv run pytest tests/contract -q -k "fixture or fake or bridge or sqlite"
 
+  package:
+    # Build the sdist+wheel and validate the metadata, so packaging regressions
+    # surface on a PR instead of at release time.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: uv build
+      - name: Validate the distribution metadata
+        run: uvx twine check dist/*
+
   e2e:
     # End-to-end CLI journeys + the real MCP stdio server. No external services
     # (the server is spawned locally), so this runs on every push/PR.
