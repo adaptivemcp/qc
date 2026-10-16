@@ -59,8 +59,8 @@ qc doctor                    # environment + connector diagnostics
 
 qc source add analytics --type postgres \
   --connection-ref env:PG_DSN --schema public
+qc policy grant strict-local analytics --dataset public.orders   # deny-by-default: grant first
 qc source test analytics
-qc policy grant strict-local analytics --dataset public.orders   # explicit grant
 qc dataset list analytics
 
 qc profile run analytics public.orders --max-queries 40 --sample-size 2000
@@ -101,6 +101,9 @@ python3 "$QC_REPO/tools/make_demo_db.py" --out demo.db --reset
 
 export SQLITE_QC="$PWD/demo.db"          # fish: set -x SQLITE_QC "$PWD/demo.db"
 qc source add demo --type sqlite --connection-ref env:SQLITE_QC
+qc policy grant strict-local demo \
+  --dataset main.customers --dataset main.orders --dataset main.events \
+  --dataset main.event_log --dataset main.metrics_daily --dataset main.empty_audit
 qc source test demo
 qc dataset list demo
 qc profile run demo main.customers --max-queries 60 --sample-size 800
@@ -117,8 +120,7 @@ ambiguity including an untyped mixed column and `NaN`/`Infinity`
 (`events`), a `WITHOUT ROWID` table (`event_log`), view discovery
 (`metrics_daily`), and zero-row aggregates (`empty_audit`). Two behaviors
 look like bugs but are correct fail-closed design — see
-[docs/gaps.md](docs/gaps.md) and the demo walkthrough in your
-`workbench/README-demo.md`.
+[docs/gaps.md](docs/gaps.md).
 
 Fixture (JSONL/CSV) sources let you try everything without a database:
 
@@ -126,6 +128,7 @@ Fixture (JSONL/CSV) sources let you try everything without a database:
 export QC_FIXTURE_ROOT=$PWD/data
 qc source add demo --type fixture \
   --connection-ref env:QC_FIXTURE_ROOT --dataset people.jsonl
+qc policy grant strict-local demo --dataset people.jsonl
 ```
 
 The Quickstart uses `env:PG_DSN` for brevity. Before wiring a **real**
