@@ -262,7 +262,7 @@ Windows, Keychain on macOS, Secret Service on Linux (which needs a Secret
 Service backend present):
 
 ```bash
-uv add keyring
+uv tool install 'querycleaner[keyring]'   # or: pip install 'querycleaner[keyring]'
 qc source add analytics --type postgres --connection-ref keyring:qc/analytics
 ```
 
@@ -327,7 +327,7 @@ qc source test analytics
 | `secret helper failed to run` | helper path has a space, or is not executable (`chmod 700`) |
 | `secret helper exited with N` | helper failed; run it by hand to see why |
 | `secret helper produced no output` | empty store entry, or the keyring locked |
-| `keyring support not installed` | `uv add keyring` |
+| `keyring support not installed` | install the extra: `uv tool install 'querycleaner[keyring]'` |
 | `environment variable … is not set` | `env:` reference with the variable unset |
 
 Finally, connect with a **least-privilege read-only account**. QC opens

@@ -119,7 +119,9 @@ class KeyringSecretResolver:
         try:
             import keyring  # type: ignore[import-not-found]
         except ImportError as exc:
-            raise AuthError("keyring support not installed (pip install keyring)") from exc
+            raise AuthError(
+                "keyring support not installed (pip install 'querycleaner[keyring]')"
+            ) from exc
         body = ref[8:]
         if "/" not in body:
             raise InvalidArgumentsError("keyring ref must be keyring:service/user")

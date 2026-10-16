@@ -31,7 +31,8 @@ dependencies = [
 postgres = ["psycopg[binary]>=3.2,<4"]
 mysql = ["mysql-connector-python>=9,<10"]
 parquet = ["pyarrow>=17,<23"]
-all = ["querycleaner[postgres]", "querycleaner[mysql]", "querycleaner[parquet]"]
+keyring = ["keyring>=25,<26"]
+all = ["querycleaner[postgres]", "querycleaner[mysql]", "querycleaner[parquet]", "querycleaner[keyring]"]
 
 [project.scripts]
 qc = "qc.cli.app:main"
