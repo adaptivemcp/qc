@@ -1221,6 +1221,24 @@ def doctor_cmd(
             f"connector:{name}", importable, "available" if importable else "driver not installed"
         )
 
+    # Optional extras: a resolver says "not installed" at the worst moment, so
+    # report availability up front. A missing extra is a warning, not unhealthy
+    # (the "not installed" detail keeps it out of `failed`, like a missing driver).
+    import importlib.util
+
+    for module, extra in (("keyring", "keyring"), ("pyarrow", "parquet")):
+        try:
+            importable = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            importable = False
+        check(
+            f"extra:{extra}",
+            importable,
+            "available"
+            if importable
+            else f"not installed (install: pip install 'querycleaner[{extra}]')",
+        )
+
     # secrets sanity: env resolver works
     import os
 
