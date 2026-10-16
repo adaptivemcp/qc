@@ -596,6 +596,18 @@ denied, `5` budget/cancelled, `6` source error, `7` validation failure,
   verification is a release gate (ADR-006).
 - HTTP bearer auth is a stopgap in front of an OIDC gateway (ADR-003).
 
+## Releasing
+
+Publishing to PyPI uses **Trusted Publishing** (OIDC) — no API token is stored
+in the repo. `.github/workflows/release.yml` builds the sdist + wheel and
+uploads it when a GitHub Release is published, or on a manual run (which
+defaults to TestPyPI for a dry run).
+
+One-time setup on PyPI — <https://pypi.org/manage/account/publishing/> — with
+project `querycleaner`, owner `adaptivemcp`, repository `qc`, workflow
+`release.yml`. After that, publishing a GitHub Release (`vX.Y.Z`) uploads to
+PyPI.
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).

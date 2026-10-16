@@ -1,0 +1,65 @@
+name: Release
+
+# Publish the `querycleaner` distribution to PyPI via **Trusted Publishing**
+# (OIDC) — no API token is stored in the repo.
+#
+# One-time setup on PyPI — https://pypi.org/manage/account/publishing/ :
+#   PyPI project name : querycleaner
+#   Owner             : adaptivemcp
+#   Repository        : qc
+#   Workflow name     : release.yml
+#   Environment       : (leave blank)
+#
+# Then either publish a GitHub Release (`vX.Y.Z`) to upload to PyPI, or run
+# this workflow manually to try TestPyPI first (which needs its own publisher
+# at https://test.pypi.org/manage/account/publishing/).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Where a manual run publishes
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: uv build
+      - name: Validate the distribution metadata
+        run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    # OIDC token for Trusted Publishing; no secret is configured.
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # PyPI on a Release; TestPyPI on a manual run that asks for it.
+          repository-url: ${{ (github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi') && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
