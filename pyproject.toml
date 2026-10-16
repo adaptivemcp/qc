@@ -30,7 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]
 mysql = ["mysql-connector-python>=9,<10"]
-all = ["querycleaner[postgres]", "querycleaner[mysql]"]
+parquet = ["pyarrow>=17,<23"]
+all = ["querycleaner[postgres]", "querycleaner[mysql]", "querycleaner[parquet]"]
 
 [project.scripts]
 qc = "qc.cli.app:main"
@@ -44,6 +45,7 @@ dev = [
     "mypy>=1.13,<2",
     "psycopg[binary]>=3.2,<4",
     "mysql-connector-python>=9,<10",
+    "pyarrow>=17,<23",
     "types-pyyaml>=6.0.12",
 ]
 
@@ -85,5 +87,5 @@ packages = ["qc"]
 exclude = ["qc/jdbc_bridge/sidecar"]
 
 [[tool.mypy.overrides]]
-module = ["faker.*", "yaml.*", "psycopg.*", "mysql.*", "mcp.*", "typer.*"]
+module = ["faker.*", "yaml.*", "psycopg.*", "mysql.*", "mcp.*", "typer.*", "pyarrow.*"]
 ignore_missing_imports = true
