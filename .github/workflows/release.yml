@@ -13,6 +13,20 @@ name: Release
 # Then either publish a GitHub Release (`vX.Y.Z`) to upload to PyPI, or run
 # this workflow manually to try TestPyPI first (which needs its own publisher
 # at https://test.pypi.org/manage/account/publishing/).
+#
+# How to release (both steps exist because each was skipped once):
+#   1. bump `version` in `pyproject.toml`;
+#   2. `uv lock` — `uv.lock` records the project version and CI runs
+#      `uv sync --locked`, so a bump without a re-lock fails the build;
+#   3. commit and push; wait for CI to be green;
+#   4. tag that commit: `git tag -m "querycleaner X.Y.Z" vX.Y.Z && git push origin vX.Y.Z`
+#      (keep `-m`: with `tag.gpgSign` set, a message-less tag opens an editor and
+#      blocks);
+#   5. `gh release create vX.Y.Z --generate-notes` — the Release is what
+#      triggers this workflow.
+# The build job refuses to proceed when the tag and `pyproject.toml` disagree, or
+# when the artefacts are not the version the tag claims, so a mis-tagged release
+# fails here with a named reason instead of as a rejected upload at PyPI.
 
 on:
   release:
