@@ -37,8 +37,25 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      - name: Check the tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)"
+          if [ "$tag" != "$declared" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match pyproject version $declared"
+            exit 1
+          fi
       - name: Build
         run: uv build
+      - name: Check the built artifacts are the version the tag claims
+        if: github.event_name == 'release'
+        run: |
+          expected="querycleaner-${GITHUB_REF_NAME#v}"
+          if ! ls dist/ | grep -q "^${expected}"; then
+            echo "::error::built $(ls dist/ | tr '\n' ' ') but the tag claims ${expected}"
+            exit 1
+          fi
       - name: Validate the distribution metadata
         run: uvx twine check dist/*
       - uses: actions/upload-artifact@v4
