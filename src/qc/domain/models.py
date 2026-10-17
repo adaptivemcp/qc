@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import Field, field_validator
 
+from qc import TOOL_VERSION
 from qc.domain.enums import (
     Budget,
     ColumnAction,
@@ -429,7 +430,7 @@ class GenerationPlan(_Base):
     enforce_uniqueness: bool = True
     output_format: str = "jsonl"
     budget: Budget = Field(default_factory=Budget)
-    tool_version: str = "0.1.0"
+    tool_version: str = Field(default_factory=lambda: TOOL_VERSION)
     allow_fallbacks: bool = False
 
 
@@ -454,7 +455,7 @@ class GenerationReport(_Base):
     rows_requested: int
     rows_generated: int = 0
     seed: int = 0
-    tool_version: str = "0.1.0"
+    tool_version: str = Field(default_factory=lambda: TOOL_VERSION)
     strategy_version: str = "1.0.0"
     metrics: list[FidelityMetric] = Field(default_factory=list)
     constraint_violations: list[str] = Field(default_factory=list)
