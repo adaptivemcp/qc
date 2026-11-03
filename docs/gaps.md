@@ -4,6 +4,10 @@ A systematic review of the implementation against `SPEC.md`, the gaps
 found, and their resolution. Each item lists the spec reference, the gap,
 and the fix with its tests.
 
+For the MCP SDK tiering checklist (conformance, triage labels, releases, docs,
+dependency policy, roadmap) and where this server falls short, see
+[`sdk-tiers.md`](sdk-tiers.md).
+
 This document is **point-in-time**: "Addressed in this pass" records one
 review pass, not a live tracker. New drift is caught by the recurring
 cadence below rather than by trusting this list to stay current.
