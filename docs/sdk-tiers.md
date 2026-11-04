@@ -14,8 +14,8 @@ practice — so this page grades us against it honestly.
 | --- | --- | --- |
 | **Conformance tests** | ✗ | We do not run [`@modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance) (it targets the protocol, not a language). Our coverage is behavioural: `tests/e2e/test_mcp_stdio.py` drives the real server over stdio, and `tests/contract/` pins the tool contracts. Neither is protocol conformance. |
 | **New protocol features** | ◐ | `mcp>=1.2,<2` is a wide range with a real ceiling, and `SPEC.md` fixes the behaviour we implement. There is no published timeline for adopting a protocol release, and no mapping from `mcp` SDK versions to spec versions we support. |
-| **Issue triage** | ◐ | `bug`, `enhancement`, `question`, `good first issue` and `help wanted` exist. The required status labels `needs confirmation`, `needs repro` and `ready for work` do not, and time-to-first-label is not measured. |
-| **Critical bug resolution** | ✗ | Priorities are `priority:high` / `priority:medium` / `priority:low`. Without a `P0` label the tier metric (from `P0` to close) cannot be computed. |
+| **Issue triage** | ✓ | Type and status labels are the required set: `bug`, `enhancement`, `question`; `needs confirmation`, `needs repro`, `ready for work`, `good first issue`, `help wanted`. Time-to-first-label is therefore measurable; no SLA is claimed. |
+| **Critical bug resolution** | ◐ | `P0`–`P3` replace the old `priority:high|medium|low` labels (existing issues migrated: high→`P1`, medium→`P2`, low→`P3`), so the metric is computable. No 7-day resolution commitment is published 2014 we are not claiming a tier. |
 | **Stable release** | ◐ | `0.2.1`. The tiers define stable as `1.0.0`+ without pre-release identifiers, so this is pre-stable by that definition — appropriate for a project still implementing against `SPEC.md`. |
 | **Documentation** | ✓ | `README.md`, `SPEC.md` (62 KB, the source of truth), `SECURITY.md`, and `docs/` (ADR, connectors, mcp, policies, operations, profiling, synthetic data, gaps). The gap document even states its own review cadence. |
 | **Dependency policy** | ◐ | Dependencies use bounded ranges (`>=x,<y`), which is the right shape, and `pyproject.toml` is the single source. There is no published update cadence or advisory-response policy. |
@@ -24,9 +24,9 @@ practice — so this page grades us against it honestly.
 
 ## What we would change first
 
-1. **Adopt the required labels** (`needs confirmation`, `needs repro`,
-   `ready for work`, `P0`–`P3`). Minutes of work, and the prerequisite for the two
-   measurable requirements.
+1. **Publish the triage and P0 commitments.** The required labels now exist, so both
+   metrics are computable; what is missing is saying — and holding to — a triage
+   window and a critical-resolution window.
 2. **Add a short roadmap.** `docs/gaps.md` already knows how to be honest; a
    forward-looking companion with the next few milestones (and the spec sections they
    complete) is the missing half.
