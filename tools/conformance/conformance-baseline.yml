@@ -1,0 +1,22 @@
+# Conformance baseline — known failures, in the harness's own format.
+#
+# Schema (one list per mode; an entry is `<scenario>` for a whole scenario or
+# `<scenario>:<check-id>` for a single check):
+#
+#   server:
+#     - tools-call-with-progress
+#     - server-stateless:sep-2575-server-implements-discover
+#   client:
+#     - sse-retry
+#
+# Exit-code rules the harness applies (see docs/conformance.md):
+#   fails + listed    → 0  (expected)
+#   fails + not listed → 1  (regression)
+#   passes + listed   → 1  (stale entry — remove it)
+#   passes + not listed → 0
+#
+# This starts EMPTY on purpose: the first run is how the baseline gets its content, and
+# every entry after that is a reviewed decision rather than a guess. Until it is
+# populated the CI job is advisory (docs/conformance.md, phase 1).
+server: []
+client: []

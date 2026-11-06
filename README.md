@@ -571,6 +571,7 @@ in a cell cannot make the agent run SQL or call a tool it wasn't given.
 | [tools/make_demo_db.py](tools/make_demo_db.py) | deterministic sample SQLite DB for trying the pipeline |
 | [docs/gaps.md](docs/gaps.md) | development gap assessment and resolutions |
 | [docs/roadmap.md](docs/roadmap.md) | what ships before 1.0, and what is deliberately not scheduled |
+| [docs/conformance.md](docs/conformance.md) | conformance-harness adoption plan, baseline and CI job |
 | [docs/security-review.md](docs/security-review.md) | the review record: threats, enforcement, tests, accepted risk |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
