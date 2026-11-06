@@ -1,5 +1,9 @@
 # Security
 
+The review record behind these guarantees — every threat, the symbol that enforces it,
+the test that proves it, and the risks accepted with their triggers — is
+[`docs/security-review.md`](docs/security-review.md).
+
 ## Threat model
 
 QC processes source data that may contain personal information,
