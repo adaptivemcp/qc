@@ -20,11 +20,12 @@
 # Every entry is a known gap with a reason; the reasons are grouped below. An entry that
 # starts passing FAILS CI as stale, so fixing one means deleting its line here.
 server:
-  # --- capabilities QC does not implement, but currently advertises (see qc#46).
-  # These must be fixed rather than baselined: advertising a capability the server
-  # cannot serve misleads every client, and the harness is right to fail them.
-  # - completion-complete
-  # - logging-set-level
+  # --- optional features QC does not implement and now does NOT advertise (qc#46).
+  # MCP logging and completions are optional; a server that omits them is correct, and
+  # QC's tools never ask the client for anything. Baselined as an accepted choice, not a
+  # bug: the harness runs the scenario regardless of the capability block.
+  - completion-complete
+  - logging-set-level
 
   # --- MCP resources and prompts: declined by design (SPEC 12.5, docs/gaps.md).
   # `initialize` should not advertise them until they exist (qc#46).

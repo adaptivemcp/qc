@@ -86,20 +86,36 @@ The 19 baseline entries fall into three honest groups — resources/prompts (dec
 SPEC 12.5), tool result shapes (text-only, which is legal MCP), and client-side
 capabilities QC has no reason to use (sampling, elicitation, logging, progress).
 
-**Two failures are not baselined because they are a defect, not a gap (#46):** `initialize`
-advertises `prompts`, `resources`, `completion` and `logging` that the server does not
-implement, so clients are told to try things that will fail. The harness is right to fail
-them, and they stay "unexpected" until the advertised set matches what is registered.
+**The first run also found a defect, now fixed (#46).** `initialize` advertised `prompts`,
+`resources`, `completion` and `logging` that the server does not implement — FastMCP
+registers those handlers unconditionally, and the SDK derives the capability block from
+them. The server is now built with an explicit set:
+
+```json
+"capabilities": { "resources": { "subscribe": false, "listChanged": false },
+                  "tools": { "listChanged": false } }
+```
+
+`resources` is advertised because `dev.adaptivemcp://tools-metadata` really is listable;
+prompts, logging and completions are absent because they are not implemented (prompts are
+declined by SPEC 12.5). A test compares the advertised set with what `resources/list` and
+`tools/list` return, in both directions, so the block cannot drift again.
+
+With the advertisement honest, `completion-complete` and `logging-set-level` are baselined
+as *accepted omissions* — MCP logging and completions are optional, and QC's tools never
+ask the client for anything. A full run now has **zero unexpected failures**.
 
 ## Adoption phases
 
-**Phase 1 — advisory (current).** The job runs, uploads `results/`, and never fails the
-build. Two scenarios are expected to be red until #46 lands; everything else in the suite
-is either passing or baselined.
+**Phase 1 — advisory (done).** The job ran, uploaded `results/`, and never failed the
+build while the baseline was being populated.
 
-**Phase 2 — blocking.** Once #46 is fixed and the baseline contains only reviewed entries,
-drop `continue-on-error`. From then on: a new failure fails CI, and a stale baseline entry
-fails CI so it cannot silently shrink.
+**Phase 2 — blocking (current).** #46 is fixed, the baseline holds 21 reviewed entries and
+a run has zero unexpected failures, so `continue-on-error` is gone. From here: a new
+failure fails CI, and a stale baseline entry fails CI (the harness exits 1 when a baselined
+scenario starts passing), so the baseline cannot silently shrink. A harness upgrade that
+adds scenarios will fail the job — that is the signal to review the new scenario, not to
+re-pin.
 
 ## The CI job
 
@@ -163,9 +179,9 @@ generated per run and never stored.
 | Plan, invocation and CI snippet | ✅ this page |
 | Loopback bearer proxy + tests | ✅ `tools/conformance/bearer_proxy.py` |
 | First real run through the proxy | ✅ 11 passed / 21 failed, 2026-11-06 |
-| Advisory CI job | ✅ wired in `ci.yml` (`continue-on-error`) |
-| Fix advertised-but-unimplemented capabilities | ☐ [#46](https://github.com/adaptivemcp/qc/issues/46) |
-| Blocking CI job | ☐ after #46 |
+| Fix advertised-but-unimplemented capabilities | ✅ [#46](https://github.com/adaptivemcp/qc/issues/46) fixed |
+| Advisory CI job | ✅ ran while the baseline was populated |
+| Blocking CI job | ✅ `continue-on-error` removed; 0 unexpected failures |
 
 Entry point for a local run once the proxy exists:
 

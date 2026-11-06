@@ -134,6 +134,7 @@ def build_server_http(runtime: Runtime, token: str, cfg: Any) -> Any:
     for spec in specs:
         _register(server, spec, dispatch, guard=rate_limited_guard)
     register_tools_metadata(server)
+    advertise_only_implemented(server, resources=True)
     return server
 
 
@@ -162,7 +163,41 @@ def build_server(runtime: Runtime, *, transport: str = "mcp-stdio") -> Any:
     # Advisory adaptive policy, for hosts that read it (SEP-2133). Optional by
     # design: nothing in QC's own enforcement depends on a client seeing it.
     register_tools_metadata(server)
+    advertise_only_implemented(server, resources=True)
     return server
+
+
+def advertise_only_implemented(server: Any, *, resources: bool) -> None:
+    """Advertise only the capabilities this server actually serves.
+
+    FastMCP registers prompt, resource and completion handlers unconditionally, so the
+    SDK's default capability block tells a client that QC supports prompts, logging and
+    completions. It does not: prompts and templates are declined by design (SPEC 12.5),
+    and there is no logging or completion support at all. A client that trusts the block
+    tries them and gets an error, which is a bug in the advertisement rather than in the
+    client (qc#46).
+
+    `resources` is explicit because the answer depends on what was registered: QC serves
+    exactly one resource (`dev.adaptivemcp://tools-metadata`), and the caller that
+    registered it says so. A test compares this flag with what `resources/list` really
+    returns.
+    """
+    from mcp.types import ServerCapabilities
+
+    inner = server._mcp_server
+    original = inner.create_initialization_options
+
+    def create_initialization_options(  # type: ignore[no-untyped-def]
+        notification_options=None, experimental_capabilities=None
+    ):
+        options = original(notification_options, experimental_capabilities)
+        options.capabilities = ServerCapabilities(
+            tools=options.capabilities.tools,
+            resources=options.capabilities.resources if resources else None,
+        )
+        return options
+
+    inner.create_initialization_options = create_initialization_options
 
 
 def _register(server: Any, spec: Any, dispatch: dict[str, Any], guard: Any = None) -> None:
