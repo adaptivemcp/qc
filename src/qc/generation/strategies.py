@@ -17,6 +17,7 @@ from typing import Any, Protocol
 from qc.domain.enums import LogicalType
 from qc.domain.errors import GenerationError
 from qc.domain.models import ColumnProfile, GenerationPlan, ProfileArtifact
+from qc.profiling.type_inference import CURRENCY_CODES, CURRENCY_SYMBOLS
 
 
 @dataclass
@@ -213,6 +214,71 @@ class NumericDistribution(_BaseStrategy):
         return float(raw)
 
 
+class CurrencyAmount(_BaseStrategy):
+    """Currency-like amounts (SPEC 7.6, 9.3).
+
+    The marker is part of the value, so it is preserved: a column of ``$12.50``
+    should not start emitting bare numbers. Placement and style come from the
+    observed format pattern when there is one, otherwise the source's own style
+    is unknown and a plain two-decimal amount is the honest guess.
+    """
+
+    name = "currency_amount"
+
+    def can_generate(self, column: ColumnProfile) -> bool:
+        return column.logical_type == LogicalType.CURRENCY
+
+    def generate(self, plan: StrategyPlan, context: GenerationContext) -> Any:
+        col = plan.profile
+        style = _currency_style(col)
+        amount = (
+            _decimal_in_range(col, context.rng) if col.numeric else _decimal_default(context.rng)
+        )
+        rendered = f"{amount:,.2f}" if style["grouping"] else f"{amount:.2f}"
+        return f"{style['prefix']}{rendered}{style['suffix']}"
+
+
+def _currency_style(column: ColumnProfile) -> dict[str, Any]:
+    """Marker and placement, read from the observed format pattern.
+
+    Normalised patterns keep the marker and replace digit runs with ``9``s, so the
+    pattern alone says whether the source wrote ``$12.50`` or ``12.50 USD``.
+    """
+    for pattern in column.format_patterns:
+        text = pattern.regex
+        marker = next((c for c in CURRENCY_SYMBOLS if c in text), None)
+        if marker is None:
+            found = re.search(r"\b([a-z]{3})\b", text)
+            if found and found.group(1).upper() in CURRENCY_CODES:
+                marker = found.group(1).upper()
+        if marker:
+            leading = not text.lstrip().startswith(("9", "+", "-"))
+            return {
+                "prefix": f"{marker} " if leading else "",
+                "suffix": "" if leading else f" {marker}",
+                "grouping": "," in text or " " in text.strip(),
+            }
+    return {"prefix": "", "suffix": "", "grouping": False}
+
+
+def _decimal_in_range(column: ColumnProfile, rng: Any) -> Decimal:
+    numeric = column.numeric
+    try:
+        lo = Decimal(str(numeric.minimum)) if numeric and numeric.minimum else Decimal("0.01")
+        hi = Decimal(str(numeric.maximum)) if numeric and numeric.maximum else Decimal("9999.99")
+    except (ArithmeticError, ValueError):
+        lo, hi = Decimal("0.01"), Decimal("9999.99")
+    if hi <= lo:
+        return lo
+    return (lo + (hi - lo) * Decimal(str(rng.random()))).quantize(Decimal("0.01"))
+
+
+def _decimal_default(rng: Any) -> Decimal:
+    return (Decimal("0.01") + Decimal("9999.98") * Decimal(str(rng.random()))).quantize(
+        Decimal("0.01")
+    )
+
+
 class BooleanRate(_BaseStrategy):
     name = "boolean_rate"
 
@@ -337,6 +403,7 @@ STRATEGY_ORDER: list[GenerationStrategy] = [
     TemporalSampler(),
     BooleanRate(),
     NumericDistribution(),
+    CurrencyAmount(),
     FormatGenerator(),
     CategoricalSampler(),
     StringSampler(),

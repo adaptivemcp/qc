@@ -44,6 +44,50 @@ if the fix encodes a decision).
 
 ## Addressed in this pass
 
+### 10. Currency-like values were never inferred — SPEC 7.6, 9.3
+
+**Gap.** SPEC 7.6 lists "currency-like value" among the logical types to
+infer independently of the declared type. `LogicalType.CURRENCY` existed and
+Postgres' `money` mapped to it, but no observation ever produced it: a text
+column of `$12.50` stayed `string`. Downstream, generation could not preserve
+an amount's marker because it never knew one was there.
+
+**Fix.**
+- `qc/profiling/type_inference.py` — `CURRENCY_RE` and a `currency` format
+  builder. A currency marker (**symbol or ISO code**) attached to a number is
+  the evidence; a bare number is deliberately *not* currency, because an
+  amount column and a plain decimal are indistinguishable without it and
+  SPEC 7.6 asks for ambiguity to be retained rather than guessed away.
+- `qc/profiling/engine.py` — currency columns collect format patterns, so the
+  marker and its placement survive profiling.
+- `qc/generation/strategies.py` — `currency_amount`, which re-emits the
+  observed marker (`$` prefix, `USD` suffix), grouping, and the observed
+  numeric range when known. Registered before `format_generator`.
+
+**Tests.** `tests/unit/test_type_inference.py`
+(`test_currency_with_symbols`,
+`test_currency_with_iso_code_and_grouping`,
+`test_currency_symbol_after_the_amount`,
+`test_bare_numbers_are_not_currency`,
+`test_currency_mixed_with_plain_text_is_ambiguous`,
+`test_currency_pattern_keeps_the_marker`) and
+`tests/unit/test_currency_generation.py` (marker prefix/suffix, grouping,
+range, determinism, no-pattern fallback).
+
+### 11. `uv run pytest` errored instead of skipping live DB tests — SPEC 16.3
+
+**Gap.** `docs/gaps.md` names `uv run pytest` as the full-suite command, but
+running it without `QC_TEST_MYSQL_DSN` raised `KeyError` from
+`_mysql_schema()` inside a fixture — before the test body's own `pytest.skip`
+could run. The suite reported a collection/teardown error rather than
+"skipped".
+
+**Fix.** `tests/integration/test_db_export.py::TestMySQLDestination.dest_config`
+skips before deriving the schema, matching every other live fixture.
+
+**Tests.** `uv run pytest` — 477 passed, 39 skipped, exit 0 (previously
+errored).
+
 ### 1. Cancellation was declared but non-functional — SPEC 4.3, 6.1, 12.6, 15
 
 **Gap.** Connectors advertised `cancellation=True`, and MCP exposed

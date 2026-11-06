@@ -223,6 +223,11 @@ def _mysql_schema() -> str:
 class TestMySQLDestination:
     @pytest.fixture
     def dest_config(self) -> SourceConfig:
+        if not os.environ.get("QC_TEST_MYSQL_DSN"):
+            # Skip from the fixture, not the test body: the schema is derived from
+            # the DSN, so without one the fixture itself would raise before the
+            # test's own skip ran and `uv run pytest` would error instead of skip.
+            pytest.skip("no mysql dsn")
         return SourceConfig(
             name="my_dest",
             connector="mysql",

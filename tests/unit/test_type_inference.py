@@ -151,6 +151,37 @@ class TestTypeInference:
         r = infer_logical_type(["99999999999999999999999999"] * 10)
         assert r.logical_type == LogicalType.STRING
 
+    def test_currency_with_symbols(self) -> None:
+        vals = [f"${i + 1}.50" for i in range(25)]
+        r = infer_logical_type(vals)
+        assert r.logical_type == LogicalType.CURRENCY
+        assert r.confidence in (Confidence.HIGH, Confidence.MEDIUM)
+
+    def test_currency_with_iso_code_and_grouping(self) -> None:
+        vals = [f"{1000 + i:,}.00 USD" for i in range(25)]
+        r = infer_logical_type(vals)
+        assert r.logical_type == LogicalType.CURRENCY
+
+    def test_currency_symbol_after_the_amount(self) -> None:
+        r = infer_logical_type(["12,50 €".replace(",", ".")] * 20)
+        assert r.logical_type == LogicalType.CURRENCY
+
+    def test_bare_numbers_are_not_currency(self) -> None:
+        # An amount with no marker is indistinguishable from a plain decimal;
+        # guessing "currency" here would lose the distinction SPEC 7.6 asks for.
+        assert infer_logical_type(["10.50", "0.01", "99.99"] * 10).logical_type in (
+            LogicalType.DECIMAL,
+            LogicalType.FLOAT,
+        )
+        assert infer_logical_type(["1,000", "2,000"] * 10).logical_type != LogicalType.CURRENCY
+
+    def test_currency_mixed_with_plain_text_is_ambiguous(self) -> None:
+        vals = ["$1.00", "hello", "$2.00", "world", "$3.00"] * 4
+        r = infer_logical_type(vals)
+        # The marker is evidence, not proof: a mixed column keeps the ambiguity.
+        assert r.ambiguous
+        assert r.confidence in (Confidence.LOW, Confidence.UNKNOWN, Confidence.MEDIUM)
+
 
 class TestPatterns:
     def test_normalize(self) -> None:
@@ -168,3 +199,11 @@ class TestPatterns:
         pats = detect_format_patterns(vals, min_occurrences=2, min_coverage=0.2)
         # unique patterns must not appear
         assert all(p[2] >= 2 for p in pats)
+
+    def test_currency_pattern_keeps_the_marker(self) -> None:
+        vals = ["$12.50", "$9.00", "$1,000.00"] * 4
+        pats = detect_format_patterns(vals, min_occurrences=2, min_coverage=0.1)
+        assert pats
+        # The marker survives normalisation, which is what the generator reads
+        # to keep emitting dollars rather than bare numbers.
+        assert any("$" in p[1] for p in pats)
