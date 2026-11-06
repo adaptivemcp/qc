@@ -147,6 +147,50 @@ class TestTypeInference:
         r = infer_logical_type(vals)
         assert r.logical_type == LogicalType.IP_ADDRESS
 
+    def test_country_code_needs_a_name_hint(self) -> None:
+        values = ["US", "CA", "GB", "ID"] * 5
+
+        hinted = infer_logical_type(values, column_hint="country_code")
+        unhinted = infer_logical_type(values)
+
+        assert hinted.logical_type == LogicalType.COUNTRY_CODE
+        # Ambiguity kept: `US` is also a state/status code, so the reading is reported as
+        # one of several and the note says why the name is what makes it defensible.
+        assert hinted.ambiguous
+        assert hinted.confidence in (Confidence.MEDIUM, Confidence.LOW)
+        assert any("state/status" in note for note in hinted.notes)
+        # Shape alone stays honest.
+        assert unhinted.logical_type == LogicalType.CATEGORICAL_STRING
+
+    def test_country_code_rejects_values_outside_the_iso_set(self) -> None:
+        # Every value is two uppercase letters, but `ZZ` is not a country code.
+        result = infer_logical_type(["ZZ", "QQ"] * 6, column_hint="country")
+
+        assert result.logical_type != LogicalType.COUNTRY_CODE
+
+    def test_postal_code_needs_a_name_hint_and_reports_locale_ambiguity(self) -> None:
+        values = ["90210", "10001", "33101", "94103"] * 3
+
+        hinted = infer_logical_type(values, column_hint="postal_code")
+        unhinted = infer_logical_type(values)
+
+        assert hinted.logical_type == LogicalType.POSTAL_CODE
+        assert hinted.ambiguous
+        assert hinted.locale_hint == "postal_shape_only"
+        assert any("locale" in note for note in hinted.notes)
+        # Without the name, a five-digit column is a number. That is the SPEC 7.6
+        # ambiguity this inference must not guess away.
+        assert unhinted.logical_type == LogicalType.INTEGER
+
+        # A zero-padded postal shape stays a string without the hint (SPEC 7.6).
+        padded = infer_logical_type(["02139", "00123"] * 6)
+        assert padded.logical_type in (LogicalType.STRING, LogicalType.IDENTIFIER)
+
+    def test_postal_hint_without_a_matching_shape_stays_as_it_was(self) -> None:
+        result = infer_logical_type(["not a postcode"] * 6, column_hint="postal_code")
+
+        assert result.logical_type == LogicalType.STRING
+
     def test_huge_int_string_stays_string(self) -> None:
         r = infer_logical_type(["99999999999999999999999999"] * 10)
         assert r.logical_type == LogicalType.STRING

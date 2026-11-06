@@ -219,6 +219,42 @@ secret substring was absent; when the secret equalled a keyword
 **Fix.** The assertion now targets the value position (`=secret`,
 `:secret@`) and requires the redaction marker, which is precise.
 
+### 12. Country-code and postal-code inference was deferred — SPEC 7.6
+
+**Gap.** `LogicalType.COUNTRY_CODE` and `POSTAL_CODE` existed and generation supported
+both, but no observation ever produced them: `COUNTRY_RE` matched in `_classify_value` and
+was deliberately ignored, `POSTAL_RE` was never referenced. `US` stayed
+`categorical_string`, `90210` stayed an integer.
+
+**Fix.**
+- `qc/profiling/type_inference.py` — inference gated on a **name or declared-type hint**
+  (`country`/`country_code`/`iso_country`, `postal`/`postcode`/`zip`/`pincode`), because
+  shape alone is not evidence. Country additionally requires every value in the ISO 3166-1
+  alpha-2 set; postal requires a known shape and reports `locale_hint:
+  postal_shape_only`. Both come back `ambiguous=True` with a note naming the alternative
+  reading.
+- `qc/profiling/engine.py` — passes the column name as the hint.
+- Generation preserves the shape (existing `format_generator`), so an inferred
+  `country_code` emits a real code and `postal_code` a five-digit form.
+
+**Tests.** `tests/unit/test_type_inference.py`: hint required for country, ISO-set
+rejection, hint required for postal, locale ambiguity reported, postal hint without a
+shape unchanged, zero-padded values still non-postal without the hint.
+
+### 13. Sensitivity-detector accuracy was unmeasured — SPEC 8.3
+
+**Gap.** The detectors are layered and their precision/recall on any corpus was unknown;
+"regex based" was the whole story.
+
+**Fix.** `tools/bench/sensitivity_bench.py` scores the real detector over 23 labelled
+columns (13 sensitive, 10 controls, three with a sensitive word in the name). It caught a
+real false positive: `123-45-6789` matched the loose phone pattern, so an SSN column was
+reported as `government_id` *and* `phone`. Fixed by excluding government-ID/date shapes
+from the phone detector. Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
+
+**Tests.** `tests/unit/test_sensitivity_bench.py` (controls present, scoring arithmetic,
+bounded metrics) and `tests/security/test_security.py` for the detector layer itself.
+
 ## Deliberately out of scope (documented, not defects)
 
 | Area | Spec | Status |

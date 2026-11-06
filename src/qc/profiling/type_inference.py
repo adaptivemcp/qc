@@ -65,6 +65,279 @@ CURRENCY_RE = re.compile(
     rf"^(?:[{_SYMBOLS_CLASS}]\s?(?:{_CUR_NUMBER})"
     rf"|(?:{_CUR_NUMBER})\s?(?:[{_SYMBOLS_CLASS}]|{_CODES_GROUP}))$"
 )
+# Name hints that make a two-letter or postal-shaped column interpretable. Shape alone is
+# not evidence: `US` is also a state code, a status code and a unit, and `00123` is a
+# zero-padded identifier that SPEC 7.6 says must stay a string (qc#37).
+COUNTRY_HINT_RE = re.compile(r"(^|_)(country|country_code|country_iso|iso_country|nation)($|_)")
+POSTAL_HINT_RE = re.compile(r"(^|_)(postal|postcode|post_code|zip|zipcode|zip_code|pincode)($|_)")
+
+#: ISO 3166-1 alpha-2. A closed code set is the corroboration a name hint buys you: two
+#: uppercase letters are weak, two uppercase letters that are both a real country code are
+#: evidence.
+ISO_3166_ALPHA2 = frozenset(
+    [
+        "AD",
+        "AE",
+        "AF",
+        "AG",
+        "AI",
+        "AL",
+        "AM",
+        "AO",
+        "AQ",
+        "AR",
+        "AS",
+        "AT",
+        "AU",
+        "AW",
+        "AX",
+        "AZ",
+        "BA",
+        "BB",
+        "BD",
+        "BE",
+        "BF",
+        "BG",
+        "BH",
+        "BI",
+        "BJ",
+        "BL",
+        "BM",
+        "BN",
+        "BO",
+        "BQ",
+        "BR",
+        "BS",
+        "BT",
+        "BV",
+        "BW",
+        "BY",
+        "BZ",
+        "CA",
+        "CC",
+        "CD",
+        "CF",
+        "CG",
+        "CH",
+        "CI",
+        "CK",
+        "CL",
+        "CM",
+        "CN",
+        "CO",
+        "CR",
+        "CU",
+        "CV",
+        "CW",
+        "CX",
+        "CY",
+        "CZ",
+        "DE",
+        "DJ",
+        "DK",
+        "DM",
+        "DO",
+        "DZ",
+        "EC",
+        "EE",
+        "EG",
+        "EH",
+        "ER",
+        "ES",
+        "ET",
+        "FI",
+        "FJ",
+        "FK",
+        "FM",
+        "FO",
+        "FR",
+        "GA",
+        "GB",
+        "GD",
+        "GE",
+        "GF",
+        "GG",
+        "GH",
+        "GI",
+        "GL",
+        "GM",
+        "GN",
+        "GP",
+        "GQ",
+        "GR",
+        "GS",
+        "GT",
+        "GU",
+        "GW",
+        "GY",
+        "HK",
+        "HM",
+        "HN",
+        "HR",
+        "HT",
+        "HU",
+        "ID",
+        "IE",
+        "IL",
+        "IM",
+        "IN",
+        "IO",
+        "IQ",
+        "IR",
+        "IS",
+        "IT",
+        "JE",
+        "JM",
+        "JO",
+        "JP",
+        "KE",
+        "KG",
+        "KH",
+        "KI",
+        "KM",
+        "KN",
+        "KP",
+        "KR",
+        "KW",
+        "KY",
+        "KZ",
+        "LA",
+        "LB",
+        "LC",
+        "LI",
+        "LK",
+        "LR",
+        "LS",
+        "LT",
+        "LU",
+        "LV",
+        "LY",
+        "MA",
+        "MC",
+        "MD",
+        "ME",
+        "MF",
+        "MG",
+        "MH",
+        "MK",
+        "ML",
+        "MM",
+        "MN",
+        "MO",
+        "MP",
+        "MQ",
+        "MR",
+        "MS",
+        "MT",
+        "MU",
+        "MV",
+        "MW",
+        "MX",
+        "MY",
+        "MZ",
+        "NA",
+        "NC",
+        "NE",
+        "NF",
+        "NG",
+        "NI",
+        "NL",
+        "NO",
+        "NP",
+        "NR",
+        "NU",
+        "NZ",
+        "OM",
+        "PA",
+        "PE",
+        "PF",
+        "PG",
+        "PH",
+        "PK",
+        "PL",
+        "PM",
+        "PN",
+        "PR",
+        "PS",
+        "PT",
+        "PW",
+        "PY",
+        "QA",
+        "RE",
+        "RO",
+        "RS",
+        "RU",
+        "RW",
+        "SA",
+        "SB",
+        "SC",
+        "SD",
+        "SE",
+        "SG",
+        "SH",
+        "SI",
+        "SJ",
+        "SK",
+        "SL",
+        "SM",
+        "SN",
+        "SO",
+        "SR",
+        "SS",
+        "ST",
+        "SV",
+        "SX",
+        "SY",
+        "SZ",
+        "TC",
+        "TD",
+        "TF",
+        "TG",
+        "TH",
+        "TJ",
+        "TK",
+        "TL",
+        "TM",
+        "TN",
+        "TO",
+        "TR",
+        "TT",
+        "TV",
+        "TW",
+        "TZ",
+        "UA",
+        "UG",
+        "UM",
+        "US",
+        "UY",
+        "UZ",
+        "VA",
+        "VC",
+        "VE",
+        "VG",
+        "VI",
+        "VN",
+        "VU",
+        "WF",
+        "WS",
+        "YE",
+        "YT",
+        "ZA",
+        "ZM",
+        "ZW",
+    ]
+)
+
+#: Postal shapes, by locale family. A shape narrows the reading, it does not name the
+#: country — the same ambiguity as `03/04/2025` in SPEC 7.6, hence the low confidence.
+POSTAL_SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("us_zip", re.compile(r"^\d{5}(-\d{4})?$")),
+    ("uk_postcode", re.compile(r"^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$")),
+    ("ca_postcode", re.compile(r"^[A-Z]\d[A-Z]\s?\d[A-Z]\d$")),
+    ("numeric_5", re.compile(r"^\d{5}$")),
+    ("numeric_6", re.compile(r"^\d{6}$")),
+)
+
 INT_RE = re.compile(r"^[+-]?\d+$")
 DECIMAL_RE = re.compile(r"^[+-]?(\d+\.\d*|\.\d+)$")
 # Common timestamps
@@ -106,6 +379,7 @@ def infer_logical_type(
     *,
     declared_type: str | None = None,
     non_null_count: int | None = None,
+    column_hint: str | None = None,
 ) -> TypeInferenceResult:
     """Infer a logical type from observed non-null values.
 
@@ -211,6 +485,48 @@ def infer_logical_type(
             best_type = LogicalType.EMAIL
             conf = Confidence.HIGH if n >= 20 else Confidence.MEDIUM
             reasons.append("all sampled values match email shape")
+
+    # Country / postal codes (qc#37): the shape is necessary but never sufficient, so the
+    # upgrade needs a name (or a declared type) saying what the column means. Without one,
+    # `US` stays a categorical string and `00123` stays an identifier — both honest.
+    # Checked separately: a hint is a name, and the declared type is not a sentence — the
+    # earlier `f"{name} {declared_type}"` form broke `^country$` on `country varchar(2)`.
+    name_hint = (column_hint or "").lower()
+    declared_hint = (declared_type or "").lower()
+    country_hint = bool(COUNTRY_HINT_RE.search(name_hint) or COUNTRY_HINT_RE.search(declared_hint))
+    postal_hint = bool(POSTAL_HINT_RE.search(name_hint) or POSTAL_HINT_RE.search(declared_hint))
+    sample_text = [str(v).strip() for v in samples[: min(n, 50)]]
+    string_ish = (LogicalType.STRING, LogicalType.CATEGORICAL_STRING, LogicalType.IDENTIFIER)
+    if country_hint and all(value.upper() in ISO_3166_ALPHA2 for value in sample_text):
+        best_type = LogicalType.COUNTRY_CODE
+        conf = Confidence.MEDIUM if n >= 10 else Confidence.LOW
+        ambiguous = True
+        reasons.append("name hints at a country and every value is an ISO 3166-1 alpha-2 code")
+        notes.append(
+            "two-letter codes are also state/status/unit codes; the column name is what "
+            "makes the country reading defensible"
+        )
+    elif postal_hint:
+        # A postal hint is allowed to overrule the numeric reading: `90210` in a column
+        # called `postal_code` is a postcode, not a quantity. Without the hint it stays an
+        # integer, which is the ambiguity SPEC 7.6 asks us to keep.
+        shaped = [
+            name
+            for name, pattern in POSTAL_SHAPES
+            if all(pattern.match(value.upper()) for value in sample_text)
+        ]
+        if shaped and (best_type in string_ish or best_type == LogicalType.INTEGER):
+            best_type = LogicalType.POSTAL_CODE
+            conf = Confidence.LOW
+            ambiguous = True
+            locale_hint = locale_hint or "postal_shape_only"
+            reasons.append(
+                f"name hints at a postal code and every value matches the {shaped[0]} shape"
+            )
+            notes.append(
+                "postal shapes overlap between countries (and with identifiers); locale "
+                "is not confirmed by shape alone"
+            )
 
     # Declared-type corroboration (never overrides strong contrary evidence)
     if declared_type and conf in (Confidence.HIGH, Confidence.MEDIUM):
