@@ -12,6 +12,7 @@ import sqlite3
 from pathlib import Path
 
 from qc.domain.enums import JobStatus
+from qc.domain.errors import ValidationError
 from qc.domain.models import JobRecord, ProfileArtifact
 
 _SCHEMA = """
@@ -48,6 +49,10 @@ CREATE INDEX IF NOT EXISTS idx_profiles_dataset ON profiles(dataset);
 
 _MIGRATIONS: dict[int, str] = {}
 
+#: The `state.db` shape this build creates. A file written by a newer QC is refused
+#: rather than opened with an older table set (SPEC 14).
+STATE_SCHEMA_VERSION = 1
+
 
 class StateStore:
     """SQLite-backed job/profile index with 0600 file permissions."""
@@ -77,6 +82,13 @@ class StateStore:
             return
         row = self._conn.execute("SELECT version FROM schema_version").fetchone()
         version = int(row["version"]) if row else 1
+        if version > STATE_SCHEMA_VERSION:
+            # Opening a newer state.db with an older table set is how a downgrade
+            # silently corrupts a user's job history. Refuse and say what to do.
+            raise ValidationError(
+                f"state database schema_version {version} is newer than supported "
+                f"{STATE_SCHEMA_VERSION}; upgrade QC to use this state directory"
+            )
         for target in sorted(_MIGRATIONS):
             if target > version:
                 self._conn.executescript(_MIGRATIONS[target])

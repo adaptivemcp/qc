@@ -9,10 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from qc.artifacts.profiles import find_profile, load_profile
+from qc.artifacts.versions import check_supported
 from qc.domain.cancellation import CancellationToken
 from qc.domain.enums import OperationKind
 from qc.domain.errors import GenerationError, NotFoundError, ValidationError
-from qc.domain.models import GenerationPlan, GenerationReport, StrategyOverride
+from qc.domain.models import (
+    SCHEMA_VERSION_PLAN,
+    GenerationPlan,
+    GenerationReport,
+    StrategyOverride,
+)
 from qc.generation.strategies import GenerationContext, execute, resolve_strategy
 from qc.generation.validation import validate_generation
 from qc.observability.metrics import OperationMetrics
@@ -160,6 +166,26 @@ def _check_unique_feasibility(resolved: dict[str, Any], unique_cols: set[str], r
             )
 
 
+def load_plan(path: Path) -> GenerationPlan:
+    """Read a plan file, refusing one written by a newer QC (SPEC 14).
+
+    The plan is an artifact like a profile: it carries a schema_version, and a future
+    version may add fields this build would drop on the next write. Refusing is the
+    only non-destructive answer.
+    """
+    if not path.is_file():
+        raise NotFoundError(f"plan not found: {path.name}")
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"corrupt plan artifact {path.name}: {exc}") from exc
+    check_supported("generation plan", raw, SCHEMA_VERSION_PLAN)
+    try:
+        return GenerationPlan.model_validate(raw)
+    except Exception as exc:
+        raise ValidationError(f"invalid generation plan: {exc}") from exc
+
+
 async def run_generation(
     rt: Runtime,
     *,
@@ -184,9 +210,7 @@ async def run_generation(
         if cancel is not None:
             cancel.raise_if_cancelled()
 
-    if not plan_file.is_file():
-        raise NotFoundError(f"plan not found: {plan_file.name}")
-    plan = GenerationPlan.model_validate(json.loads(plan_file.read_text(encoding="utf-8")))
+    plan = load_plan(plan_file)
     if seed is not None:
         plan.seed = seed
     if allow_fallbacks:
