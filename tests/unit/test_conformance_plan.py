@@ -107,15 +107,16 @@ def test_the_baseline_records_the_first_real_run() -> None:
     assert "resources-read-text" in baseline
 
 
-def test_the_open_capability_defect_is_not_baselined() -> None:
+def test_the_fixed_capability_defect_is_recorded_as_an_omission() -> None:
     baseline = yaml.safe_load(BASELINE.read_text(encoding="utf-8"))["server"]
+    plan = _plan()
 
-    # qc#46: `initialize` advertises prompts/resources/completion/logging it does not
-    # implement. That is a bug to fix, so it must stay red (unexpected) rather than be
-    # excused by the baseline.
-    assert "logging-set-level" not in baseline
-    assert "completion-complete" not in baseline
-    assert "#46" in _plan()
+    # qc#46 fixed the advertisement; logging and completions stay baselined as accepted
+    # omissions (optional in MCP, and QC's tools never ask the client for anything).
+    assert "logging-set-level" in baseline
+    assert "completion-complete" in baseline
+    assert "#46" in plan
+    assert "zero unexpected failures" in plan
 
 
 def test_the_roadmap_points_at_the_plan() -> None:

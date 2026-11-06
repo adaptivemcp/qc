@@ -99,8 +99,9 @@ jobs:
       - name: Connector contract tests (live)
         run: uv run pytest tests/integration tests/contract -q -m integration
 
-  # Advisory until qc#46 lands: the harness is right that `initialize` advertises
-  # capabilities the server does not implement, so two scenarios stay unexpected.
+  # Blocking since qc#46: `initialize` now advertises only what the server serves, the
+  # baseline holds 21 reviewed gaps, and a run has zero unexpected failures. A stale
+  # baseline entry fails here too, so the file cannot silently shrink.
   conformance:
     runs-on: ubuntu-latest
     needs: checks
@@ -136,8 +137,7 @@ jobs:
             -H "content-type: application/json" \
             -H "accept: application/json, text/event-stream" \
             -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"ci\",\"version\":\"0\"}}}" >/dev/null; do sleep 1; done'
-      - name: Conformance (advisory)
-        continue-on-error: true
+      - name: Conformance
         run: |
           npx -y @modelcontextprotocol/conformance@0.1.11 server \
             --url http://127.0.0.1:3001/mcp \
