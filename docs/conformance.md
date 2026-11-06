@@ -26,8 +26,7 @@ $ npx @modelcontextprotocol/conformance server --help
 So the adoption path is: **a loopback token-injecting proxy** in front of QC, and the
 harness talks to the proxy. That keeps the security stance honest — QC still refuses
 unauthenticated HTTP — instead of adding a "conformance mode" that disables the guarantee
-being reviewed. The proxy is the first task below; it is not written yet, and this page
-does not pretend otherwise.
+being reviewed. The proxy is `tools/conformance/bearer_proxy.py`.
 
 Stdio is not an option for server mode: the harness connects over HTTP. QC's stdio
 transport stays the recommended local mode and is covered by `tests/e2e/`.
@@ -56,34 +55,57 @@ that is a reviewed decision. The four rules the harness applies:
 Entries naming a single check (`<scenario>:<check-id>`) are preferred over whole
 scenarios: baselining a scenario to excuse one check stops enforcing its siblings.
 
+## The token proxy
+
+`tools/conformance/bearer_proxy.py` — ASGI, loopback-only, token from the environment:
+
+- refuses any `--listen` host that is not loopback (it forwards a bearer token, so
+  `0.0.0.0` would expose an unauthenticated surface);
+- reads the token from `QC_MCP_HTTP_TOKEN` (a name you choose with `--token-env`) and never
+  from argv, so it does not appear in the process list;
+- replaces any caller-supplied `Authorization` header rather than forwarding it;
+- strips hop-by-hop headers and streams response chunks, because Streamable HTTP may hold
+  an SSE stream open and buffering would turn a working server into a timeout;
+- logs no request paths (they can name datasets).
+
+## First run — 2026-11-06
+
+Through the proxy, `conformance@0.1.11 server --url http://127.0.0.1:3001/mcp`:
+
+```
+Running active suite (30 scenarios) against http://127.0.0.1:3001/mcp
+Total: 11 passed, 21 failed
+```
+
+Passing: `server-initialize`, `ping`, `tools-list`, `tools-call-simple-text`,
+`tools-call-error`, `resources-list`, `prompts-list`, and `dns-rebinding-protection`
+(2 checks). The DNS-rebinding pass is worth noting: it is a security check the server
+passes on its own, without configuration.
+
+The 19 baseline entries fall into three honest groups — resources/prompts (declined by
+SPEC 12.5), tool result shapes (text-only, which is legal MCP), and client-side
+capabilities QC has no reason to use (sampling, elicitation, logging, progress).
+
+**Two failures are not baselined because they are a defect, not a gap (#46):** `initialize`
+advertises `prompts`, `resources`, `completion` and `logging` that the server does not
+implement, so clients are told to try things that will fail. The harness is right to fail
+them, and they stay "unexpected" until the advertised set matches what is registered.
+
 ## Adoption phases
 
-**Phase 1 — advisory (this plan).** The job runs, uploads `results/`, and never fails the
-build. The report is how the baseline gets populated. Do not merge baseline entries
-guessed from a red job log.
+**Phase 1 — advisory (current).** The job runs, uploads `results/`, and never fails the
+build. Two scenarios are expected to be red until #46 lands; everything else in the suite
+is either passing or baselined.
 
-**Phase 2 — blocking.** Once the baseline contains only reviewed entries, drop
-`continue-on-error`. From then on: a new failure fails CI, and a stale entry fails CI so it
-cannot silently shrink.
-
-## Probe: the proxy
-
-`tools/conformance/bearer_proxy.py` (to be written as the first task):
-
-- listen on `127.0.0.1:<port>`, forward to QC's HTTP port;
-- add `Authorization: Bearer <token>` to every request;
-- stream responses unchanged (Streamable HTTP may hold an SSE stream open, so the proxy
-  must not buffer or rewrite bodies);
-- no TLS, no logging of bodies, no listening on `0.0.0.0`;
-- accept the token from the environment, never argv.
-
-Acceptance: `curl -sf http://127.0.0.1:<port>/mcp` reaches QC, and the harness's
-`server-initialize` scenario passes through it.
+**Phase 2 — blocking.** Once #46 is fixed and the baseline contains only reviewed entries,
+drop `continue-on-error`. From then on: a new failure fails CI, and a stale baseline entry
+fails CI so it cannot silently shrink.
 
 ## The CI job
 
-Documented here, **not wired yet** — it would be red until the baseline exists and the
-proxy lands. It goes next to `integration-db` in `.github/workflows/ci.yml`:
+Wired in `.github/workflows/ci.yml` as the `conformance` job, **advisory**
+(`continue-on-error`) until #46 lands. It stands the server up behind the proxy and runs
+the harness:
 
 ```yaml
   conformance:
@@ -95,15 +117,18 @@ proxy lands. It goes next to `integration-db` in `.github/workflows/ci.yml`:
         with:
           python-version: "3.12"
       - run: uv sync --locked
-      - name: Serve QC over HTTP, behind a token-injecting proxy
+      - name: Serve QC over HTTP behind the token proxy
         run: |
           set -euo pipefail
+          uv run qc init --root "$RUNNER_TEMP/qc-project"
+          # enable [mcp.http] and point it at env:QC_MCP_HTTP_TOKEN (see qc.toml notes)
           export QC_MCP_HTTP_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-          uv run qc mcp --transport http &
+          echo "QC_MCP_HTTP_TOKEN=$QC_MCP_HTTP_TOKEN" >> "$GITHUB_ENV"
+          uv run qc mcp --transport http --root "$RUNNER_TEMP/qc-project" &
           uv run python tools/conformance/bearer_proxy.py \
-            --listen 3001 --upstream 8765 --token "$QC_MCP_HTTP_TOKEN" &
-          timeout 30 bash -c 'until curl -sf http://127.0.0.1:3001/mcp >/dev/null; do sleep 0.5; done'
-      - name: Conformance (advisory until the baseline is populated)
+            --listen 127.0.0.1:3001 --upstream http://127.0.0.1:8765 &
+          timeout 90 bash -c 'until curl -sf -X POST http://127.0.0.1:3001/mcp ... >/dev/null; do sleep 1; done'
+      - name: Conformance (advisory)
         continue-on-error: true
         run: |
           npx -y @modelcontextprotocol/conformance@0.1.11 server \
@@ -117,9 +142,8 @@ proxy lands. It goes next to `integration-db` in `.github/workflows/ci.yml`:
           path: conformance-results
 ```
 
-The project needs `[mcp.http] enabled = true`, `require_auth = true` and
-`auth_token_ref = "env:QC_MCP_HTTP_TOKEN"` in the CI `qc.toml`; the token is generated per
-run and never stored.
+The workflow itself is the source of truth for the exact `qc.toml` patch; the token is
+generated per run and never stored.
 
 ## What this buys, and what it does not
 
@@ -137,9 +161,11 @@ run and never stored.
 | --- | --- |
 | Baseline file with the harness's schema | ✅ `tools/conformance/conformance-baseline.yml` |
 | Plan, invocation and CI snippet | ✅ this page |
-| Loopback bearer proxy | ☐ first task |
-| Advisory CI job | ☐ after the proxy |
-| Blocking CI job | ☐ after the baseline is reviewed |
+| Loopback bearer proxy + tests | ✅ `tools/conformance/bearer_proxy.py` |
+| First real run through the proxy | ✅ 11 passed / 21 failed, 2026-11-06 |
+| Advisory CI job | ✅ wired in `ci.yml` (`continue-on-error`) |
+| Fix advertised-but-unimplemented capabilities | ☐ [#46](https://github.com/adaptivemcp/qc/issues/46) |
+| Blocking CI job | ☐ after #46 |
 
 Entry point for a local run once the proxy exists:
 

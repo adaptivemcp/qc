@@ -15,8 +15,42 @@
 #   passes + listed   → 1  (stale entry — remove it)
 #   passes + not listed → 0
 #
-# This starts EMPTY on purpose: the first run is how the baseline gets its content, and
-# every entry after that is a reviewed decision rather than a guess. Until it is
-# populated the CI job is advisory (docs/conformance.md, phase 1).
-server: []
+# Populated from a real run on 2026-11-06 through the bearer proxy
+# (`conformance@0.1.11 server --url …/mcp`): 11 passed, 21 failed, 0 unexpected.
+# Every entry is a known gap with a reason; the reasons are grouped below. An entry that
+# starts passing FAILS CI as stale, so fixing one means deleting its line here.
+server:
+  # --- capabilities QC does not implement, but currently advertises (see qc#46).
+  # These must be fixed rather than baselined: advertising a capability the server
+  # cannot serve misleads every client, and the harness is right to fail them.
+  # - completion-complete
+  # - logging-set-level
+
+  # --- MCP resources and prompts: declined by design (SPEC 12.5, docs/gaps.md).
+  # `initialize` should not advertise them until they exist (qc#46).
+  - prompts-get-embedded-resource
+  - prompts-get-simple
+  - prompts-get-with-args
+  - prompts-get-with-image
+  - resources-read-binary
+  - resources-read-text
+  - resources-subscribe
+  - resources-templates-read
+  - resources-unsubscribe
+
+  # --- tool result shapes QC does not produce. Its tools return text content only,
+  # which is legal MCP; these scenarios require image/audio/embedded/mixed content.
+  - tools-call-audio
+  - tools-call-embedded-resource
+  - tools-call-image
+  - tools-call-mixed-content
+
+  # --- client-side capabilities QC does not use: sampling, elicitation, logging,
+  # progress notifications. A profiling server has no reason to ask the client for any.
+  - tools-call-elicitation
+  - tools-call-sampling
+  - tools-call-with-logging
+  - tools-call-with-progress
+  - elicitation-sep1034-defaults
+  - elicitation-sep1330-enums
 client: []

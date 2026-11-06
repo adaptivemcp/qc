@@ -21,6 +21,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 PLAN = ROOT / "docs" / "conformance.md"
 BASELINE = ROOT / "tools" / "conformance" / "conformance-baseline.yml"
+PROXY = ROOT / "tools" / "conformance" / "bearer_proxy.py"
 ROADMAP = ROOT / "docs" / "roadmap.md"
 
 HARNESS = "@modelcontextprotocol/conformance"
@@ -85,13 +86,36 @@ def test_the_ci_snippet_is_real_yaml_with_a_conformance_step() -> None:
     assert any(isinstance(step, dict) and step.get("continue-on-error") is True for step in steps)
 
 
-def test_the_plan_says_the_proxy_is_not_written_yet() -> None:
+def test_the_plan_names_the_proxy_that_exists() -> None:
     plan = _plan()
 
-    # The honest status: QC's HTTP transport requires auth and the harness has no header
-    # option, so the proxy is a prerequisite and must not be described as existing.
+    # QC's HTTP transport requires auth and the harness has no header option, so the plan
+    # is only executable if the proxy it names is actually there.
     assert "require_auth" in plan
-    assert "not written yet" in plan
+    assert "tools/conformance/bearer_proxy.py" in plan
+    assert PROXY.is_file()
+
+
+def test_the_baseline_records_the_first_real_run() -> None:
+    baseline = yaml.safe_load(BASELINE.read_text(encoding="utf-8"))["server"]
+    plan = _plan()
+
+    # Populated, not aspirational: the run is cited, and the entries are the harness's ids.
+    assert len(baseline) >= 15
+    assert len(set(baseline)) == len(baseline)
+    assert "11 passed" in plan
+    assert "resources-read-text" in baseline
+
+
+def test_the_open_capability_defect_is_not_baselined() -> None:
+    baseline = yaml.safe_load(BASELINE.read_text(encoding="utf-8"))["server"]
+
+    # qc#46: `initialize` advertises prompts/resources/completion/logging it does not
+    # implement. That is a bug to fix, so it must stay red (unexpected) rather than be
+    # excused by the baseline.
+    assert "logging-set-level" not in baseline
+    assert "completion-complete" not in baseline
+    assert "#46" in _plan()
 
 
 def test_the_roadmap_points_at_the_plan() -> None:
