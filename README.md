@@ -570,6 +570,7 @@ in a cell cannot make the agent run SQL or call a tool it wasn't given.
 | [docs/operations.md](docs/operations.md) | deploy, log, upgrade, retain |
 | [tools/make_demo_db.py](tools/make_demo_db.py) | deterministic sample SQLite DB for trying the pipeline |
 | [docs/gaps.md](docs/gaps.md) | development gap assessment and resolutions |
+| [docs/roadmap.md](docs/roadmap.md) | what ships before 1.0, and what is deliberately not scheduled |
 | [docs/adr/](docs/adr/) | architecture decision records |
 
 ## Development
