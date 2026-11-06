@@ -318,3 +318,45 @@ What the numbers say, and what they do not:
 - Re-record this table with the machine and date when the profiler changes; it is a
   regression baseline, not a promise about other hardware.
 
+### Sanitization and generation throughput
+
+`tools/bench/throughput_bench.py` measures the other half of M7: after a dataset is
+profiled, how fast do rows move through per-column sanitization, and through synthesis +
+validation + write? Both stages run the real application paths (`preview_rows`,
+`Profiler`, `create_plan`, `run_generation`) against a real project root, a real policy
+file and a real SQLite source — a throughput number from a mocked writer would be a number
+about the mock.
+
+```bash
+uv run python tools/bench/throughput_bench.py
+uv run python tools/bench/throughput_bench.py --sizes 5000,20000 --repeat 5
+uv run python tools/bench/throughput_bench.py --json
+```
+
+Recorded 2026-11-06, same host and method as the table above (median of 3 runs):
+
+| stage | rows | seconds | rows/sec | peak MB |
+| --- | ---: | ---: | ---: | ---: |
+| sanitize | 5,000 | 0.15 | 33,952 | 4.7 |
+| generate | 5,000 | 3.32 | 1,506 | 8.0 |
+| sanitize | 20,000 | 0.55 | 36,326 | 19.2 |
+| generate | 20,000 | 13.06 | 1,532 | 10.7 |
+
+What the numbers say:
+
+- **Sanitization is not the cost.** ~34–36k rows/sec, flat across 4× the rows, and the
+  work is per-row transforming after a bounded read; peak memory grows with the page (a
+  `preview` returns the rows it read), which is why `--limit` and the inline caps exist.
+- **Generation is ~20× slower and flat per row** (~1.5k rows/sec): each row is synthesized
+  from a learned strategy, checked against uniqueness/format constraints, validated, and
+  written. That is the throughput to quote when sizing a synthetic run — a million rows is
+  roughly eleven minutes of this stage on this host, before any destination write.
+- Both are single-process and Python-bound, so they scale by running more jobs, not by a
+  bigger machine.
+- The fixture deliberately has duplicate ids: `unique = distinct == row_count` in the
+  profiler, so a sequential-key table would make generation fail its uniqueness constraint
+  rather than measure throughput. A run against primary-key data is a correctness test,
+  not a speed test.
+- Re-record with the host and date when either path changes; this is a regression
+  baseline, not a promise about other hardware.
+
