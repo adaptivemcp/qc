@@ -180,6 +180,70 @@ uniqueness + nullability and are marked `medium`/`low` confidence with
 overlap. **Inferred relationships are hypotheses until verified**;
 correlation is not causation.
 
+## Country and postal codes (qc#37)
+
+Both are **ambiguity problems**, so neither is inferred from shape alone:
+
+- `US` is also a state code, a status code and a unit; `90210` is also a number, and
+  `00123` must stay a string (SPEC 7.6).
+- Inference therefore needs a **name hint** (`country`, `country_code`, `iso_country`;
+  `postal`, `postcode`, `zip`, `zip_code`, `pincode`) — or a declared type carrying the
+  same word. With the hint:
+  - every value must be in the ISO 3166-1 alpha-2 set for `country_code` (a closed code
+    set is the corroboration a name buys you);
+  - every value must match one of the known postal shapes for `postal_code`, and the
+    result is `low` confidence with `locale_hint: postal_shape_only`;
+  - both are reported `ambiguous` with a note naming the alternative reading.
+
+Without the hint the column keeps its shape-based type (`categorical_string` for `US`,
+`integer`/`string` for a five-digit column), which is the honest answer. Generation
+preserves the shape: `country_code` emits a real code and `postal_code` emits a
+five-digit form.
+
+```python
+infer_logical_type(["US", "CA", "GB"], column_hint="country_code")  # country_code, ambiguous
+infer_logical_type(["US", "CA", "GB"])                              # categorical_string
+```
+
+## Sensitivity-detector accuracy
+
+The detectors are layered (name → format → entropy → org hooks) and their error rate was
+previously unknown. `tools/bench/sensitivity_bench.py` scores them on 23 labelled columns:
+13 sensitive (some with bland names, so the value layer is exercised) and 10 controls,
+three of which carry a sensitive *word* in the name on purpose.
+
+```bash
+uv run python tools/bench/sensitivity_bench.py
+```
+
+Recorded 2026-11-06:
+
+| label | expected | predicted | TP | precision | recall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| address | 2 | 2 | 2 | 1.00 | 1.00 |
+| credential | 2 | 3 | 2 | 0.67 | 1.00 |
+| date_of_birth | 1 | 1 | 1 | 1.00 | 1.00 |
+| email | 3 | 4 | 3 | 0.75 | 1.00 |
+| financial | 1 | 1 | 1 | 1.00 | 1.00 |
+| government_id | 1 | 1 | 1 | 1.00 | 1.00 |
+| health | 1 | 1 | 1 | 1.00 | 1.00 |
+| ip_address | 1 | 1 | 1 | 1.00 | 1.00 |
+| name | 1 | 1 | 1 | 1.00 | 1.00 |
+| phone | 1 | 2 | 1 | 0.50 | 1.00 |
+
+What the numbers say:
+
+- **Recall is 1.00 everywhere on this fixture**; the failures are precision, and all of
+  them are the name layer firing on a control (`email_verified`, `token_count`,
+  `phone_model`). A sensitive word in a column name is evidence, not proof.
+- **The one true bug the fixture caught**: `123-45-6789` also matched the loose phone
+  pattern, so an SSN column was reported as both `government_id` and `phone`. Fixed by
+  excluding government-ID and date shapes from the phone detector — phone precision went
+  0.50 → 1.00.
+- The fixture is curated to be separable; treat 1.00 recall as "the detectors find what
+  they are designed to find", not as an expected real-world rate. It is a regression
+  baseline and a place to add the next hard case.
+
 ## Inspecting a profile
 
 ```bash

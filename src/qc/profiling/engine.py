@@ -490,6 +490,9 @@ class Profiler:
             non_null,
             declared_type=col.source_type,
             non_null_count=len(non_null),
+            # Country/postal inference needs the column's meaning, not just its shape
+            # (qc#37): the name is the hint that makes a two-letter code interpretable.
+            column_hint=name,
         )
 
         # Format patterns from string-ish values

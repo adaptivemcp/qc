@@ -78,6 +78,10 @@ _JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8
 _BEARER_RE = re.compile(r"(?i)^(bearer|basic|token)\s+\S+")
 # Government ID shapes
 _SSN_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$")
+# ...and the shapes that would otherwise also look like a phone number: `123-45-6789`
+# satisfies the loose phone pattern, so an SSN column reported PHONE as well (measured by
+# tools/bench/sensitivity_bench.py, qc#37).
+_NOT_PHONE_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$|^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
 # Date shapes that the loose phone regex would otherwise match
 _DATE_SHAPE_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$")
 # Card-like: 13-19 digits (with or without separators) — Luhn checked
@@ -178,6 +182,7 @@ def detect_sensitivity(
         if PHONE_RE.match(v)
         and 7 <= sum(c.isdigit() for c in v) <= 15
         and not _DATE_SHAPE_RE.match(v)  # dates are not phone numbers
+        and not _NOT_PHONE_RE.match(v)  # government IDs are not phone numbers
     )
     if phone_like / n >= 0.8:
         add(

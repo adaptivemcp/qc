@@ -28,7 +28,7 @@ Each is declined with a reason, and a concrete caller retires the deferral, not 
 | Item | Issue | State |
 | --- | --- | --- |
 | Live MaxCompute driver/dialect verification | #21 | Release gate: the bridge protocol is tested, live confirmation needs a project |
-| Country-code and postal-code inference | #37 | Deferred with the evidence they would need; shape alone is ambiguous |
+| ~~Country-code and postal-code inference~~ | #37 | **Done 2026-11-06** — hint-gated, ambiguity reported, measured sensitivity/precision in `profiling.md` |
 
 ## 3. Next after the above
 
