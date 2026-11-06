@@ -236,3 +236,49 @@ caps are enforced in-process (`rate_limit_per_minute`,
 - SQLite WAL handles the single-writer local model; do not point multiple
   QC processes at one `state.db`.
 - Sheet reads cap at 1M cells per query (truncated flag set).
+
+## Measured baselines
+
+`tools/bench/profile_bench.py` profiles a generated SQLite table through the real
+`Profiler` and policy engine, offline. It answers the question capacity planning
+actually needs: **what does a profile cost, and what does it scale with?**
+
+```bash
+uv run python tools/bench/profile_bench.py            # rows 10k / 100k / 1M
+uv run python tools/bench/profile_bench.py --json
+uv run python tools/bench/profile_bench.py --sizes 100000 --sample-size 5000
+```
+
+Recorded 2026-11-06 on Linux 7.2.11 (20 logical cores), Python 3.14, SQLite fixtures,
+median of 3 runs, `sample_size=1000`:
+
+| rows      | sample | queries | sampled rows | seconds | peak MB |
+| --------: | -----: | ------: | -----------: | ------: | ------: |
+|    10,000 |  1,000 |      30 |        1,042 |    0.94 |     1.0 |
+|   100,000 |  1,000 |      30 |        1,042 |    1.44 |     0.8 |
+| 1,000,000 |  1,000 |      30 |        1,042 |    6.89 |     0.8 |
+
+Sample size at a fixed 100,000 rows:
+
+| sample | queries | sampled rows | seconds | peak MB |
+| -----: | ------: | -----------: | ------: | ------: |
+|    100 |      30 |          142 |    0.68 |     0.4 |
+|  1,000 |      30 |        1,042 |    1.44 |     0.8 |
+|  5,000 |      30 |        5,042 |    4.84 |     4.2 |
+
+What the numbers say, and what they do not:
+
+- **Query count is flat (30) across three orders of magnitude.** The adaptive planner
+  decides from metadata plus one sample, so a bigger table does not buy more queries —
+  which is the budget that binds first on a remote source.
+- **Time tracks two things:** the aggregate probes, which scan the table (1M rows ≈ 6.9s
+  against 1.4s at 100k), and the sample size, which dominates once the sample grows
+  (5,000 rows ≈ 4.8s at a fixed 100k table). Neither is quadratic.
+- **Peak memory stays under 5 MB** for every configuration here, consistent with
+  "budgets bound memory": the sample is materialized, the table is not.
+- These are single-host SQLite numbers with a warm page cache. A networked source adds
+  per-query latency, so multiply by query count — which is why keeping it flat is the
+  property that matters.
+- Re-record this table with the machine and date when the profiler changes; it is a
+  regression baseline, not a promise about other hardware.
+

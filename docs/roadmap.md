@@ -16,7 +16,7 @@ work M7's exit criteria name plus the deferrals recorded in `gaps.md`.
 | **Published triage + resolution commitments** | The required labels exist, so time-to-first-label and critical-resolution are measurable; no window is claimed. Claim one, then hold it. | `CONTRIBUTING.md` (windows), the issue templates |
 | **Connector compatibility matrix** | M7 asks for one. Today the contract suite proves shape, not supported server versions. | `docs/connectors.md` table + the live CI matrix |
 | **Upgrade and migration policy** | Artifact and config schemas are versioned (§14) but nothing says what a version bump guarantees. | `docs/operations.md` section + a schema-version test |
-| **Performance benchmarks** | M7 asks for them. Profiling cost per probe is measured; end-to-end latency and row throughput are not. | `tools/bench/`, results in `docs/operations.md` |
+| **Performance benchmarks** | M7 asks for them. **Profiling is measured** (`tools/bench/profile_bench.py`: 30 queries flat across 10k→1M rows, 0.94s→6.89s, <5 MB peak, recorded in `operations.md`). Sanitization and generation throughput are still unmeasured. | `tools/bench/` — extend to sanitize/generate |
 | **Security review note** | `SECURITY.md` states the stance; a review record of the threat model (sources, MCP surface, secrets, generated data) is missing. | `docs/security-review.md` |
 
 Deliberately **not** scheduled for 1.0: anything in `gaps.md`'s "Deliberately out of
