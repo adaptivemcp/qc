@@ -12,6 +12,7 @@ import os
 import re
 from pathlib import Path
 
+from qc.artifacts.versions import check_supported
 from qc.domain.errors import NotFoundError, ValidationError
 from qc.domain.models import SCHEMA_VERSION_PROFILE, ProfileArtifact
 
@@ -58,16 +59,7 @@ def load_profile(path: Path) -> ProfileArtifact:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
         raise ValidationError(f"corrupt profile artifact {path.name}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ValidationError("profile artifact must be a JSON object")
-    version = raw.get("schema_version")
-    if not isinstance(version, int):
-        raise ValidationError("profile artifact missing schema_version")
-    if version > SCHEMA_VERSION_PROFILE:
-        raise ValidationError(
-            f"profile schema_version {version} is newer than supported "
-            f"{SCHEMA_VERSION_PROFILE}; upgrade QC to read this artifact"
-        )
+    version = check_supported("profile", raw, SCHEMA_VERSION_PROFILE)
     if version < SCHEMA_VERSION_PROFILE:
         raw = _migrate(raw, version)
     try:
