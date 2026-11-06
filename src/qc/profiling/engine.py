@@ -503,6 +503,7 @@ class Profiler:
             "categorical_string",
             "url",
             "free_text",
+            "currency",
         ):
             str_vals = [str(v) for v in non_null]
             for pid, norm, count, cov in detect_format_patterns(str_vals):

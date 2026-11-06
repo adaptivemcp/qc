@@ -29,6 +29,42 @@ PHONE_RE = re.compile(r"^\+?[0-9][0-9\s().-]{5,20}[0-9]$")
 URL_RE = re.compile(r"^(https?|ftp)://[^\s/$.?#][^\s]*$", re.IGNORECASE)
 COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 POSTAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 -]{2,10}$")
+
+# Currency-like amounts (SPEC 7.6): a symbol or ISO code must be attached to the
+# number. A bare number is *not* currency evidence — an amount column and a plain
+# decimal are indistinguishable without the marker, and guessing would lose the
+# distinction the spec asks us to keep.
+CURRENCY_SYMBOLS = "$€£¥₹₩₽₺₴₦₱฿"
+CURRENCY_CODES = (
+    "USD",
+    "EUR",
+    "GBP",
+    "JPY",
+    "IDR",
+    "SGD",
+    "AUD",
+    "CAD",
+    "CHF",
+    "CNY",
+    "INR",
+    "KRW",
+    "BRL",
+    "ZAR",
+    "MYR",
+    "PHP",
+    "THB",
+    "TRY",
+    "RUB",
+    "NZD",
+)
+# Grouping separators people actually paste: comma, space, no-break space, thin space
+_CUR_NUMBER = r"[+-]?\d{1,3}(?:[,\u00a0\u202f ]\d{3})*(?:\.\d+)?|[+-]?\d+(?:\.\d+)?"
+_SYMBOLS_CLASS = re.escape(CURRENCY_SYMBOLS)
+_CODES_GROUP = "|".join(CURRENCY_CODES)
+CURRENCY_RE = re.compile(
+    rf"^(?:[{_SYMBOLS_CLASS}]\s?(?:{_CUR_NUMBER})"
+    rf"|(?:{_CUR_NUMBER})\s?(?:[{_SYMBOLS_CLASS}]|{_CODES_GROUP}))$"
+)
 INT_RE = re.compile(r"^[+-]?\d+$")
 DECIMAL_RE = re.compile(r"^[+-]?(\d+\.\d*|\.\d+)$")
 # Common timestamps
@@ -239,6 +275,9 @@ def _classify_value(v: Any) -> tuple[LogicalType, str | None, dict[str, bool]]:
     except ValueError:
         pass
 
+    if CURRENCY_RE.match(s):
+        return LogicalType.CURRENCY, None, flags
+
     if COUNTRY_RE.match(s):
         # two-letter codes are weak evidence alone; caller may see categorical
         pass
@@ -310,6 +349,11 @@ _fmt("int", r"[+-]?\d+", "integer")
 _fmt("decimal", r"[+-]?\d+\.\d+", "decimal")
 _fmt("zero_padded", r"0\d+", "zero-padded identifier")
 _fmt("url", r"https?://\S+", "URL")
+_fmt(
+    "currency",
+    rf"(?:[{_SYMBOLS_CLASS}]\s?(?:{_CUR_NUMBER})|(?:{_CUR_NUMBER})\s?(?:[{_SYMBOLS_CLASS}]|{_CODES_GROUP}))",
+    "currency-like amount",
+)
 _fmt("ipv4", r"\b\d{1,3}(\.\d{1,3}){3}\b", "IPv4")
 _fmt("phone", r"\+?[\d][\d\s().-]{5,17}\d", "phone-like")
 _fmt("alpha_words", r"[A-Za-z]+( [A-Za-z]+)+", "multi-word text")
