@@ -15,6 +15,36 @@ tell the profiling planner what probes are possible.
 | `google-sheets` | `httpx` + OAuth/service token | readonly scope; no write API calls exist | mocked-contract tested |
 | `lark-sheets` | `httpx` + tenant/user token | readonly scope; no write API calls exist | mocked-contract tested |
 
+## Server compatibility
+
+What the test suite **actually exercises**, which is the only compatibility claim this
+project makes. The live matrix is the `integration-db` job in
+`.github/workflows/ci.yml`; `tests/unit/test_connector_matrix.py` fails if this table and
+that workflow disagree, so the claim cannot drift from the evidence.
+
+| Connector | Server exercised | Image | Driver | Evidence |
+|---|---|---|---|---|
+| `postgres` | 16 | `postgres:16` | `psycopg[binary]` 3.2–3.x | live contract + integration tests in `integration-db` |
+| `mysql` | 8.4 | `mysql:8.4` | `mysql-connector-python` | live contract + integration tests in `integration-db` |
+| `sqlite` | the stdlib build of the CI runtime (floor 3.25 for `mode=ro` + `query_only`) | — | stdlib `sqlite3` | `TestSQLiteContract` runs unconditionally, no server |
+| `maxcompute` | none — the fake sidecar exercises the bridge *protocol* | — | pinned JDBC jar via the JVM sidecar | live driver/dialect verification is a release gate (#21) |
+| `google-sheets` / `lark-sheets` | none — mocked connector | — | `httpx` + OAuth/tenant token | contract tests against the fake; live needs credentials and is not in CI |
+
+What that means in practice:
+
+- **PostgreSQL 16 and MySQL 8.4 are the supported-and-tested versions.** Other majors are
+  expected to work — the connectors use catalog queries, not version-specific syntax — but
+  they are not exercised, so a bug there would be found by a user, not by CI.
+- **Older/newer majors are a gap, not a promise.** If you need PostgreSQL 13 or MySQL 5.7,
+  the honest step is to add the image to the `integration-db` services matrix and let the
+  contract suite speak; until then this table says "untested".
+- **MaxCompute is protocol-tested, not server-tested** until #21 runs against a real
+  project; the driver version is pinned and recorded in `driver-lock.json`.
+- **The spreadsheet connectors are mocked in CI** because live access needs credentials
+  and a tenant; their contract assertions cover shape and read-only behaviour, not a
+  provider's current API version.
+
+
 ## Adding a source
 
 ```bash
