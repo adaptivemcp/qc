@@ -19,7 +19,7 @@ practice — so this page grades us against it honestly.
 | **Stable release** | ◐ | `0.2.1`. The tiers define stable as `1.0.0`+ without pre-release identifiers, so this is pre-stable by that definition — appropriate for a project still implementing against `SPEC.md`. |
 | **Documentation** | ✓ | `README.md`, `SPEC.md` (62 KB, the source of truth), `SECURITY.md`, and `docs/` (ADR, connectors, mcp, policies, operations, profiling, synthetic data, gaps). The gap document even states its own review cadence. |
 | **Dependency policy** | ◐ | Dependencies use bounded ranges (`>=x,<y`), which is the right shape, and `pyproject.toml` is the single source. There is no published update cadence or advisory-response policy. |
-| **Roadmap** | ✗ | `docs/gaps.md` is explicitly **point-in-time** ("not a live tracker"), so it is a review record rather than a forward-looking roadmap. There is no document saying what ships next. |
+| **Roadmap** | ✓ | [`roadmap.md`](roadmap.md) (2026-11-06) is the forward-looking companion to `gaps.md`: the 1.0 blockers with where each lands, the carried-over deferrals, and a rule that the page shrinks rather than accumulates. `gaps.md` stays the point-in-time review it says it is. |
 | **Conformance score / advancement** | N/A | Only applies to SDKs applying for a tier. |
 
 ## What we would change first
@@ -27,9 +27,9 @@ practice — so this page grades us against it honestly.
 1. **Publish the triage and P0 commitments.** The required labels now exist, so both
    metrics are computable; what is missing is saying — and holding to — a triage
    window and a critical-resolution window.
-2. **Add a short roadmap.** `docs/gaps.md` already knows how to be honest; a
-   forward-looking companion with the next few milestones (and the spec sections they
-   complete) is the missing half.
+2. ~~**Add a short roadmap.**~~ **Done 2026-11-06:** [`roadmap.md`](roadmap.md) is the
+   forward-looking companion, covering the 1.0 blockers, the deferrals, and an ordering
+   rule ("move what shipped, delete what no longer matters").
 3. **Run the conformance suite against the server.** `tests/e2e/` already speaks MCP;
    pointing the official harness at the stdio server would turn behavioural confidence
    into protocol evidence, and the expected-failures baseline makes adopting it
