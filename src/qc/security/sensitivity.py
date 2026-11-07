@@ -94,6 +94,18 @@ _DATE_SHAPE_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[
 # free_text label alone does not describe (qc#37 follow-up).
 _EMBEDDED_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}")
 _EMBEDDED_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{5,20}\d")
+# An unseparated number: 8-13 digits that are not part of a longer figure or a decimal.
+_EMBEDDED_BARE_NUMBER_RE = re.compile(r"(?<![\d.])\d{8,13}(?![\d.])")
+# Words that put a bare number in a phone context...
+_EMBEDDED_PHONE_CONTEXT_RE = re.compile(
+    r"(?i)\b(call|phone|mobile|tel|telephone|contact|reach|text|dial|whatsapp|callback|cell)\b"
+)
+# ...and words that put it in a reference context instead. A window with both is treated as
+# a phone ("call about order 4471 on 4155550100"), because the phone word is the closer signal
+# to how a human reads the sentence.
+_EMBEDDED_PHONE_NEIGHBOUR_RE = re.compile(r"(?i)\b(order|invoice|sku|account|ticket|batch|ref)\b")
+# A compact date is eight digits and would otherwise pass as a number.
+_COMPACT_DATE_RE = re.compile(r"^(?:19|20)\d{6}$")
 
 # Card-like: 13-19 digits (with or without separators) — Luhn checked
 _CARD_RE = re.compile(r"^\d{13,19}$|^\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}$")
@@ -328,6 +340,25 @@ def _embedded_phone(value: str) -> bool:
             continue
         if sum(c.isdigit() for c in text) >= 8 and re.search(r"[+\s().-]", text):
             return True
+
+    # Unseparated numbers (`4155550100`) are common in prose and indistinguishable from an
+    # order number by shape, so the sentence around them decides: a phone word near the
+    # number makes it a candidate, a reference word without one does not, and a compact date
+    # never does.
+    for match in _EMBEDDED_BARE_NUMBER_RE.finditer(value):
+        text = match.group(0)
+        if _COMPACT_DATE_RE.match(text):
+            continue
+        window = value[max(0, match.start() - 40) : match.end() + 40]
+        if not _EMBEDDED_PHONE_CONTEXT_RE.search(window):
+            continue
+        if _EMBEDDED_PHONE_NEIGHBOUR_RE.search(
+            value[max(0, match.start() - 12) : match.end() + 12]
+        ) and not _EMBEDDED_PHONE_CONTEXT_RE.search(
+            value[max(0, match.start() - 12) : match.end() + 12]
+        ):
+            continue
+        return True
     return False
 
 
