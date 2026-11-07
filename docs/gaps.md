@@ -298,6 +298,21 @@ rule, estimated totals, unknown totals, full scan, no sampling, short samples),
 `tests/contract/test_fixture_profiling.py` (artifact carries the block and its statement),
 and `tests/unit/test_artifact_versions.py` (v1 → v2 migration).
 
+### 15. Generation reports had no version-checked reader — SPEC 10.4, 14
+
+**Gap.** `run_generation` and `validate_output` write report artifacts, and nothing in QC
+read them back. The schema-version rule therefore applied to profiles, plans and `state.db`
+but not to the reports a user is most likely to archive and revisit.
+
+**Fix.** `qc/artifacts/reports.py::load_report` applies `check_supported` and validates the
+model; `qc report show <path> [--json]` is the reader — a summary in text, the artifact in
+JSON, both refusing a report written by a newer QC with the upgrade instruction. Corrupt
+and version-less files fail as validation errors rather than tracebacks.
+
+**Tests.** `tests/unit/test_artifact_versions.py` (supported version loads, future refused,
+corrupt/missing/version-less), and the CLI journey now reads the report its own
+`generate run` produced (`tests/e2e/test_cli_journeys.py`).
+
 ## Deliberately out of scope (documented, not defects)
 
 | Area | Spec | Status |

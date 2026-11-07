@@ -61,6 +61,7 @@ sanitize_app = typer.Typer(help="Sanitize previews and exports.", no_args_is_hel
 generate_app = typer.Typer(help="Plan, run, and validate synthetic data.", no_args_is_help=True)
 export_app = typer.Typer(help="Export outputs.", no_args_is_help=True)
 job_app = typer.Typer(help="Inspect background jobs.", no_args_is_help=True)
+report_app = typer.Typer(help="Inspect generation and validation reports.", no_args_is_help=True)
 
 app.add_typer(source_app, name="source")
 app.add_typer(dataset_app, name="dataset")
@@ -70,6 +71,7 @@ app.add_typer(sanitize_app, name="sanitize")
 app.add_typer(generate_app, name="generate")
 app.add_typer(export_app, name="export")
 app.add_typer(job_app, name="job")
+app.add_typer(report_app, name="report")
 
 # --------------------------------------------------------------- global options
 
@@ -1102,6 +1104,41 @@ def export_database(
 
 
 # -------------------------------------------------------------- qc job *
+
+
+@report_app.command("show")
+@handle_errors
+def report_show(
+    report: Annotated[str, typer.Argument(help="Path to a report artifact")],
+    root: RootOpt = None,
+    config: ConfigOpt = None,
+    json_output: JsonOpt = False,
+    quiet: QuietOpt = False,
+    verbose: VerboseOpt = False,
+) -> None:
+    """Show a generation/validation report (schema-version checked)."""
+    from qc.artifacts.reports import load_report
+
+    opts = _opts(json_output, quiet, verbose, "text")
+    # The runtime is loaded so `--root`/`--config` behave like every other command, but a
+    # report is read from disk directly: it is an artifact, not project state.
+    _runtime(root, config)
+    artifact = load_report(Path(report).expanduser())
+    lines = [
+        f"report      {artifact.report_id}",
+        f"plan        {artifact.plan_id}",
+        f"status      {artifact.status}",
+        f"rows        {artifact.rows_generated:,} generated of {artifact.rows_requested:,} requested",
+        f"seed        {artifact.seed}",
+        f"runtime     {artifact.runtime_seconds:.2f}s",
+        f"schema      v{artifact.schema_version}",
+    ]
+    if artifact.output_path:
+        lines.append(f"output      {artifact.output_path}")
+    if artifact.constraint_violations:
+        lines.append(f"violations  {len(artifact.constraint_violations)}")
+    lines.extend(f"warning     {warning}" for warning in artifact.warnings)
+    emit(artifact, opts=opts, text="\n".join(lines))
 
 
 @job_app.command("list")

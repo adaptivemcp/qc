@@ -391,6 +391,18 @@ class TestJourneyGenerate:
         hard = [m for m in report["metrics"] if m["hard"] and not m["passed"]]
         assert hard == []
 
+        # A report on disk is readable, and reading it applies the schema-version rule.
+        report_file = max(
+            (project / "reports").glob("*.report.json"), key=lambda path: path.stat().st_mtime
+        )
+        shown = run_qc(project, "report", "show", str(report_file))
+        assert "status" in shown.stdout
+        assert "25 generated of 25 requested" in shown.stdout
+        shown_json = json.loads(
+            run_qc(project, "report", "show", str(report_file), "--json").stdout
+        )
+        assert shown_json["rows_generated"] == 25
+
     def test_deterministic_with_same_seed(self, project: Path, profile_id: str) -> None:
         run_qc(project, "generate", "plan", profile_id, "--rows", "10", "--seed", "99")
         plan_file = next((project / "reports").glob("*.plan.json"))
