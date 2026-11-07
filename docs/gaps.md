@@ -330,6 +330,25 @@ and a profile row is upgraded in place with both rows intact and the new index p
 three reopenings apply the migration exactly once; a fresh file starts at the current
 version; a newer file is still refused; injected migrations run in version order.
 
+### 17. HTTP auth stopped at one shared token — SPEC 12.4, ADR-003
+
+**Gap.** `docs/operations.md` specified an OIDC resource server — JWKS signature check,
+`iss`/`aud`/`exp`, required scopes, audience binding — but the code wired only
+`StaticTokenVerifier` with `validate_token_resource=False`. Every remote deployment needed an
+OIDC gateway to compensate, and the QC hop still carried one shared credential.
+
+**Fix.** `mode = "oidc"` selects `JwtTokenVerifier` (`src/qc/mcp/oidc.py`): RS256/ES256 only
+(`none`/HS256 refused before claims are read), key by `kid` from a cached JWKS with one
+refetch on an unknown `kid` (rotation, bounded against a fetch loop), `iss`/`aud`/`exp`/`nbf`
+with 30s leeway, and `required_scopes`. The server binds the verifier to its audience
+(`validate_token_resource=True`), so a token minted for another service cannot open QC.
+Failures are `401 invalid_token`; the reason is logged, never returned.
+
+**Tests.** `tests/unit/test_mcp_oidc.py` (15): valid RS256/ES256, expired, wrong audience,
+wrong issuer, missing scope, unsigned/HMAC refusal, JWKS caching, rotation, discovery, config
+parsing and the `_auth_for` wiring (verifier + audience binding). Offline: the JWKS document
+is injected.
+
 ## Deliberately out of scope (documented, not defects)
 
 | Area | Spec | Status |

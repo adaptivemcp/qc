@@ -40,29 +40,24 @@ Validation, per request:
 3. **Scopes** — a required scope (e.g. `qc:mcp`) must be present; missing
    scope is `AuthError`, not a tool-level denial.
 
-This is currently *stubbed*, not missing: `build_server_http`
-(`src/qc/mcp/server.py`) already wires a `token_verifier` and
-`AuthSettings`, but with `issuer_url` pointing at QC itself and
-`validate_token_resource=False`, i.e. the token verifier is the only check.
-The change is to select the verifier and fill `AuthSettings` from config:
+**Implemented, 2026-11-07.** `mode = "oidc"` selects `JwtTokenVerifier`
+(`src/qc/mcp/oidc.py`) and binds the token to QC's audience
+(`validate_token_resource=True`); `mode = "static"` keeps the shared bearer. The verifier
+does exactly the three steps above, in that order:
 
-```python
-# src/qc/mcp/server.py — sketched delta, not yet implemented
-if cfg.oidc is not None:
-    verifier = JwtTokenVerifier(          # new: JWKS + iss/aud/exp/scope checks
-        issuer=cfg.oidc.issuer_url,
-        audience=cfg.oidc.audience,       # == QC's public resource URL
-        required_scopes=cfg.oidc.required_scopes,
-    )
-    auth = AuthSettings(
-        issuer_url=AnyHttpUrl(cfg.oidc.issuer_url),
-        resource_server_url=AnyHttpUrl(cfg.oidc.audience),
-        validate_token_resource=True,
-    )
-else:
-    verifier = StaticTokenVerifier(resolve_secret(cfg.auth_token_ref))
-    auth = AuthSettings(issuer_url=AnyHttpUrl(f"http://{cfg.host}:{cfg.port}"))
-```
+- **Signature** — `alg` must be RS256 or ES256 (a token that says `none`, or uses HMAC with
+  a JWKS-shaped `kid`, is refused before any claim is read); the key comes from the
+  provider's JWKS by `kid`, cached for `cache_seconds` (default 300). An **unknown `kid`**
+  forces one refetch — that is how rotation is picked up — and then gives up rather than
+  letting an attacker-chosen `kid` drive an unbounded fetch loop.
+- **Claims** — `iss` matches, `aud` contains the configured audience, `exp`/`nbf` are
+  current with 30s leeway.
+- **Scopes** — every `required_scopes` entry must be present in `scope` (space-delimited)
+  or `scopes` (list).
+
+A failure returns `None`, which the MCP middleware renders as `401 invalid_token`; the
+reason goes to the log only, never to the caller. The JWKS URI is discovered from
+`{issuer}/.well-known/openid-configuration` unless `jwks_uri` is set.
 
 Config (`qc.toml`), alongside the existing `[mcp.http]` keys:
 
@@ -71,14 +66,21 @@ Config (`qc.toml`), alongside the existing `[mcp.http]` keys:
 enabled = true
 host = "127.0.0.1"
 port = 8787
-# static mode (today): auth_token_ref = "env:QC_MCP_HTTP_TOKEN"
+# static mode: auth_token_ref = "env:QC_MCP_HTTP_TOKEN"
 mode = "oidc"                       # "static" | "oidc"
 
 [mcp.http.oidc]
 issuer_url = "https://idp.example.com"
 audience = "https://qc.example.com" # this server's public URL
 required_scopes = ["qc:mcp"]
+# jwks_uri = "https://idp.example.com/jwks"   # optional; discovered when unset
+cache_seconds = 300
 ```
+
+Tests: `tests/unit/test_mcp_oidc.py` — valid RS256/ES256, expired, wrong audience, wrong
+issuer, missing scope, `none`/HS256 refusal, JWKS caching, key rotation, discovery, and the
+config wiring. Offline: the JWKS document is injected, so the suite needs no identity
+provider.
 
 Adding a JWT verify dependency is the cost; it is isolated to the server
 module. `StaticTokenVerifier` stays for local and single-operator setups —

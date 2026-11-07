@@ -9,9 +9,9 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from qc.domain.errors import InvalidArgumentsError
 
@@ -47,14 +47,38 @@ class McpStdioConfig(_StrictModel):
     enabled: bool = True
 
 
+class OidcConfig(_StrictModel):
+    """Identity provider for OIDC bearer tokens (SPEC 12.4, ADR-003)."""
+
+    issuer_url: str
+    #: QC's own audience: a token minted for another service must not open this one.
+    audience: str
+    required_scopes: list[str] = Field(default_factory=list)
+    #: Optional; discovered from ``{issuer}/.well-known/openid-configuration`` when unset.
+    jwks_uri: str | None = None
+    cache_seconds: float = Field(default=300.0, gt=0)
+
+
 class McpHttpConfig(_StrictModel):
     enabled: bool = False
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
     require_auth: bool = True
+    #: ``static`` (one shared bearer token, the v1 stopgap) or ``oidc`` (validated JWT).
+    mode: Literal["static", "oidc"] = "static"
     auth_token_ref: str | None = None  # e.g. "env:QC_MCP_HTTP_TOKEN"
+    oidc: OidcConfig | None = None
     rate_limit_per_minute: int = Field(default=120, ge=1)
     max_request_bytes: int = Field(default=1_048_576, ge=1)
+
+    @model_validator(mode="after")
+    def _check_auth_mode(self) -> McpHttpConfig:
+        if self.enabled and self.require_auth and self.mode == "oidc" and self.oidc is None:
+            raise ValueError('[mcp.http.oidc] is required when mode = "oidc"')
+        # A missing static token is a runtime refusal (`run_http` raises AuthError), not a
+        # parse error: the config file may legitimately arrive before the secret's env var,
+        # and the security test pins that contract.
+        return self
 
 
 class AppConfig(_StrictModel):
