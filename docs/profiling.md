@@ -180,6 +180,44 @@ uniqueness + nullability and are marked `medium`/`low` confidence with
 overlap. **Inferred relationships are hypotheses until verified**;
 correlation is not causation.
 
+## Sampling representativeness
+
+A profile says how many rows it *saw*; this says how much of the table that was, and what it
+does not support. Every artifact carries a `representativeness` block:
+
+```json
+"representativeness": {
+  "method": "stable_key",
+  "sampled_rows": 1000,
+  "total_rows": 100000,
+  "total_measurement": "exact",
+  "coverage": 0.01,
+  "confidence": "low",
+  "statement": "sampled 1,000 of 100,000 rows (1.00% coverage) by stable_key — a sample of the dataset, so rare values may be missing",
+  "limitations": ["a sample cannot establish the absence of a rare value; absence in the sample is not evidence of absence"]
+}
+```
+
+The rules are arithmetic plus one honest sentence, not a statistical estimate:
+
+- **coverage** is `sampled / total`, clamped to 1.0. When the source reports no row count,
+  coverage is `null` and the statement says so — "unknown" is not "0%".
+- **confidence**: `high` for a full scan, `medium` for a sample covering ≥ 20% of an
+  exactly-counted table, `low` otherwise (including any estimated row count).
+- **limitations** name the two things a reader would otherwise assume: a sample cannot
+  establish absence, and a metadata-estimated total is not a count. A short sample also
+  names the shortfall (`sample reached 400 of the requested 1,000 rows`).
+- **no sampling** (budget 0, or a source that cannot sample) gets its own statement rather
+  than a silently empty block.
+
+A deliberate non-goal: this is **coverage disclosure, not a confidence interval**. A
+sampling-distribution estimate would need per-column variance and a chosen confidence
+level, and would still be wrong for "does this value exist at all" — which is the question
+a profile is usually asked. Say what was seen; do not imply more.
+
+Schema: adding the block bumps the profile artifact to `schema_version: 2`. Older artifacts
+migrate forward with the field absent, because they genuinely did not record it.
+
 ## Country and postal codes (qc#37)
 
 Both are **ambiguity problems**, so neither is inferred from shape alone:

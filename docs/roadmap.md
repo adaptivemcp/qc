@@ -35,11 +35,14 @@ Each is declined with a reason, and a concrete caller retires the deferral, not 
 Ordered by evidence, not ambition — each is only worth doing if the thing before it
 shows a gap:
 
-1. **Sensitivity precision on free text.** Detectors are regex/checksum based; a
-   measured false-positive rate on a labelled corpus would say whether that is enough.
-2. **Sampling representativeness reporting.** The spec requires disclosing that a sample
-   cannot establish absence; the report states it, but nothing measures how far off the
-   sample was.
+1. ~~**Sensitivity precision on free text.**~~ **Done 2026-11-07** — a 40-column labelled
+   fixture measuring precision/recall, which has produced five fixed defects
+   (`profiling.md#sensitivity-detector-accuracy`).
+2. ~~**Sampling representativeness reporting.**~~ **Done 2026-11-07** — every profile
+   artifact states sampled rows, total, coverage, method, confidence and the limitation
+   ("a sample cannot establish the absence of a rare value"). Deliberately coverage
+   disclosure, not a confidence interval
+   (`profiling.md#sampling-representativeness`).
 3. **Relational generation scheduling** (declarative only today) — the first caller that
    needs a multi-table order retires its "out of scope" entry.
 

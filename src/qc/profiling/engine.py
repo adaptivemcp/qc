@@ -53,6 +53,7 @@ from qc.observability.logging import get_logger
 from qc.observability.metrics import OperationMetrics
 from qc.profiling.falsy import analyze_falsy
 from qc.profiling.relationships import discover_relationships
+from qc.profiling.representativeness import summarize_sampling
 from qc.profiling.type_inference import detect_format_patterns, infer_logical_type
 from qc.security.policy import Ceiling, DecisionContext, Operation, PolicyEngine
 from qc.security.sensitivity import DetectorConfig, detect_sensitivity
@@ -383,6 +384,15 @@ class Profiler:
             observations=observations,
             row_count=row_count,
             row_count_measurement=row_measurement,
+            # State what was seen, and what that does not support (SPEC 7.4). Without it a
+            # reader has to infer coverage from two numbers in different places.
+            representativeness=summarize_sampling(
+                method=sample_method,
+                sampled_rows=len(sampled_rows),
+                total_rows=row_count,
+                total_measurement=row_measurement,
+                requested_sample_size=sample_size,
+            ),
             profile_config={
                 "sample_size": sample_size,
                 "sensitivity_scan": settings.sensitivity_scan,
