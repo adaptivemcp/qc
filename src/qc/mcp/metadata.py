@@ -34,6 +34,9 @@ from qc.mcp.schemas import TOOL_SPECS
 
 #: Wire identifiers (SEP-2133: scheme-less extension id, URI form on the wire).
 TOOLS_METADATA_URI = "dev.adaptivemcp://tools-metadata"
+#: Capability identifier advertised in `initialize` (SEP-2133: a server declares the
+#: extension it publishes so a client can learn it without first calling `resources/list`).
+TOOLS_METADATA_EXTENSION = "dev.adaptivemcp/tools-metadata"
 TOOLS_METADATA_MIME = "application/yaml"
 TOOLS_METADATA_NAME = "tools-metadata"
 #: Document schema version, independent of the QC tool version.
