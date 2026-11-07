@@ -77,10 +77,19 @@ required_scopes = ["qc:mcp"]
 cache_seconds = 300
 ```
 
-Tests: `tests/unit/test_mcp_oidc.py` — valid RS256/ES256, expired, wrong audience, wrong
-issuer, missing scope, `none`/HS256 refusal, JWKS caching, key rotation, discovery, and the
-config wiring. Offline: the JWKS document is injected, so the suite needs no identity
-provider.
+Tests, in two layers:
+
+- `tests/unit/test_mcp_oidc.py` pins the validation logic with an injected JWKS document —
+  valid RS256/ES256, expired, wrong audience, wrong issuer, missing scope, `none`/HS256
+  refusal, caching, rotation, and the config wiring. No network.
+- `tests/unit/test_mcp_oidc_http.py` runs a **stub identity provider on localhost** and uses
+  the default `httpx` fetcher, so the real paths are exercised: discovery of
+  `/.well-known/openid-configuration`, the JWKS fetch and its cache, rotation (an unknown
+  `kid` refetches exactly once), and the app boundary through `streamable_http_app()` — a
+  valid RS256 token gets `200`, an expired one and a token-less request get `401`.
+
+Note on revocation: a rotated key stays trusted until the JWKS cache expires, because a
+cached key is not a revoked key. Shorten `cache_seconds` if immediate revocation matters.
 
 Adding a JWT verify dependency is the cost; it is isolated to the server
 module. `StaticTokenVerifier` stays for local and single-operator setups —
