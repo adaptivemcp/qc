@@ -88,6 +88,28 @@ Tests, in two layers:
   `kid` refetches exactly once), and the app boundary through `streamable_http_app()` — a
   valid RS256 token gets `200`, an expired one and a token-less request get `401`.
 
+### Validated as a running deployment
+
+**Measured 2026-11-07:** `qc mcp --transport http` in `mode = "oidc"` against Keycloak 26.0,
+with a real password-grant token (`aud: qc-mcp`, `scope: qc:mcp`):
+
+| Request | Result |
+| --- | --- |
+| `initialize` with a valid token | **200** (`protocolVersion` in the response) |
+| `initialize` with a token minted for another audience (no `qc-mcp` audience mapper) | **401** |
+| `initialize` with no token | **401** |
+
+**It found a startup bug.** `AuthSettings.resource_server_url` requires an absolute URL, but an
+OAuth audience is a plain string — `qc-mcp` is a normal one — so configuring a real-world
+audience crashed the server before it bound the port. The wiring now sets
+`resource_server_url`/`validate_token_resource` only when the audience *is* a URL; otherwise the
+verifier's exact `aud` check stands alone (which is stricter than the middleware check it
+replaces). A unit case pins the string-audience shape.
+
+`tests/integration/test_oidc_deployment.py` keeps this rerunnable: it starts the server process
+against a provider from `QC_OIDC_*` env vars, mints both tokens, and asserts 200/401/401. Skipped
+unless those are set, so CI stays offline.
+
 ### Validated against a real identity provider
 
 **Measured 2026-11-07, Keycloak 26.0 (`start-dev`, realm imported), qc 0.2.1.**
