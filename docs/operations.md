@@ -220,7 +220,7 @@ Where it applies, and what a version means:
 | --- | --- | --- |
 | Profile (`.profile.json`) | `SCHEMA_VERSION_PROFILE` | `qc.artifacts.profiles.load_profile` |
 | Generation plan (`plan.json`) | `SCHEMA_VERSION_PLAN` | `qc.application.generation.load_plan` |
-| Generation / validation report | `SCHEMA_VERSION_REPORT` | written by QC, read by tooling |
+| Generation / validation report | `SCHEMA_VERSION_REPORT` | `qc.artifacts.reports.load_report` (`qc report show`) |
 | Policy document | `SCHEMA_VERSION_POLICY` | `qc.config.policies.parse_policy` |
 | `state.db` | `STATE_SCHEMA_VERSION` | `qc.application.jobs.StateStore` |
 
@@ -229,7 +229,9 @@ failure mode is a missed call site: the profile loader had the check and the pla
 did not, so a plan written by a newer QC was accepted without complaint. `state.db` had
 the same shape of gap in the other direction — a *newer* database was opened with an
 older table set, which is how a downgrade quietly corrupts job history; it is now
-refused with the same instruction.
+refused with the same instruction. Generation and validation reports were the last
+artifacts written without a reader that checked them; `qc report show <path>` reads them
+through `load_report` and refuses a newer schema the same way.
 
 **What a release guarantees** (SPEC 14):
 

@@ -16,11 +16,13 @@ import pytest
 from qc.application.generation import load_plan
 from qc.application.jobs import STATE_SCHEMA_VERSION, StateStore
 from qc.artifacts.profiles import load_profile
+from qc.artifacts.reports import load_report
 from qc.artifacts.versions import check_supported, read_schema_version
 from qc.domain.errors import NotFoundError, ValidationError
 from qc.domain.models import (
     SCHEMA_VERSION_PLAN,
     SCHEMA_VERSION_PROFILE,
+    SCHEMA_VERSION_REPORT,
     DatasetRef,
     GenerationPlan,
     new_id,
@@ -151,6 +153,57 @@ def test_a_plan_missing_the_version_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="schema_version"):
         load_plan(path)
+
+
+# ------------------------------------------------------------------ report loader
+
+
+def _report_payload(version: int) -> dict[str, object]:
+    return {
+        "schema_version": version,
+        "report_id": new_id("rep"),
+        "plan_id": "plan_x",
+        "rows_requested": 10,
+        "rows_generated": 10,
+        "seed": 0,
+    }
+
+
+def test_report_of_the_supported_version_loads(tmp_path: Path) -> None:
+    path = tmp_path / "r.report.json"
+    path.write_text(json.dumps(_report_payload(SCHEMA_VERSION_REPORT)), encoding="utf-8")
+
+    report = load_report(path)
+    assert report.rows_generated == 10
+    assert report.schema_version == SCHEMA_VERSION_REPORT
+
+
+def test_report_from_the_future_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "r.report.json"
+    path.write_text(json.dumps(_report_payload(SCHEMA_VERSION_REPORT + 1)), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="upgrade QC"):
+        load_report(path)
+
+
+def test_corrupt_and_missing_reports_are_reported_not_raised_raw(tmp_path: Path) -> None:
+    corrupt = tmp_path / "corrupt.report.json"
+    corrupt.write_text("{nope", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="corrupt report"):
+        load_report(corrupt)
+    with pytest.raises(NotFoundError):
+        load_report(tmp_path / "absent.report.json")
+
+
+def test_a_report_missing_the_version_is_refused(tmp_path: Path) -> None:
+    payload = _report_payload(SCHEMA_VERSION_REPORT)
+    del payload["schema_version"]
+    path = tmp_path / "r.report.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="schema_version"):
+        load_report(path)
 
 
 # ------------------------------------------------------------------- state store
