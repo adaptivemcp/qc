@@ -222,7 +222,7 @@ Where it applies, and what a version means:
 | Generation plan (`plan.json`) | `SCHEMA_VERSION_PLAN` | `qc.application.generation.load_plan` |
 | Generation / validation report | `SCHEMA_VERSION_REPORT` | `qc.artifacts.reports.load_report` (`qc report show`) |
 | Policy document | `SCHEMA_VERSION_POLICY` | `qc.config.policies.parse_policy` |
-| `state.db` | `STATE_SCHEMA_VERSION` | `qc.application.jobs.StateStore` |
+| `state.db` | `STATE_SCHEMA_VERSION` | `qc.application.jobs.StateStore` (migrations in `_MIGRATIONS`) |
 
 The rule is implemented once, in `qc.artifacts.versions.check_supported`, since the
 failure mode is a missed call site: the profile loader had the check and the plan loader
@@ -249,6 +249,25 @@ a profile is reproducible across tool versions.
 
 Operational practice: `uv sync --locked` in CI; upgrade by bumping pins, running the full
 suite, then reviewing artifact diffs (`qc profile diff`) before rolling forward.
+
+### How `state.db` upgrades
+
+The state directory is upgraded **in place**, on open, before any query:
+
+- a fresh file is created at `STATE_SCHEMA_VERSION`, with the current tables and indexes;
+- an older file runs the entries in `_MIGRATIONS` whose target version is above its own, in
+  ascending order, updating `schema_version` after each;
+- every entry is written to be idempotent (`CREATE INDEX IF NOT EXISTS`), so a process that
+  dies between the script and the version update is recoverable — replaying it is harmless;
+- a **newer** file is refused outright (`upgrade QC to use this state directory`), because
+  opening it with an older table set is how a downgrade corrupts job history.
+
+The current migration (v2) adds `idx_jobs_created`, the index behind `qc job list` on a
+long-lived state directory. `tests/unit/test_state_migrations.py` builds a v1 database by
+hand, inserts a job and a profile row, opens it with the current build, and asserts the rows
+survive, the version moved, the index exists exactly once after three reopenings, and a
+newer file is still refused. It also exercises the registry itself with injected
+migrations, so the mechanism is covered independently of which migration is current.
 
 ## Health checks (remote mode)
 
