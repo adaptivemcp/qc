@@ -263,9 +263,11 @@ The fixture was then hardened with the shapes real tables contain — masked add
 E.164 and spaced numbers, JWTs, base32 secrets, free text with contact details, plus
 near-miss controls (SKUs, 40-hex git SHAs, UUID request ids, ISO timestamps). That found a
 third defect: a git SHA was flagged as a credential, so digest-shaped values (32/40/64/128
-hex) now only count when the column name already claims a credential. Measured gap, kept
-visible: free text is flagged as `free_text`, but the address and phone inside it are not
-extracted — a test asserts the current behaviour so it changes deliberately.
+hex) now only count when the column name already claims a credential. Then **embedded
+extraction** landed: free text reports `free_text` plus `email`/`phone` with
+`evidence: embedded:*`, guarded against the two shapes that made it noisy (a bare eight-digit
+run in prose, and dates/times such as `2025-05-01T12:00:00Z`). The one measured limitation
+is an embedded phone with no separator or country code, which the guard deliberately misses.
 
 Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
 

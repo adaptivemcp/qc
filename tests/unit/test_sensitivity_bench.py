@@ -40,10 +40,11 @@ def test_scoring_counts_true_positives_once_per_column() -> None:
     bench = _bench()
     scores = {score.label: score for score in bench.evaluate()}
 
-    # `email` appears in four labelled columns: two named, one bland, one masked.
+    # `email` appears in five labelled columns: two named, one bland, one masked, and one
+    # free-text column that embeds an address.
     email = scores["email"]
-    assert email.expected == 4
-    assert email.true_positive == 4
+    assert email.expected == 5
+    assert email.true_positive == 5
     assert email.recall == 1.0
 
     # The name layer used to flag `email_verified` (precision 0.75); the contradiction rule
