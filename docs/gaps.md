@@ -313,6 +313,23 @@ and version-less files fail as validation errors rather than tracebacks.
 corrupt/missing/version-less), and the CLI journey now reads the report its own
 `generate run` produced (`tests/e2e/test_cli_journeys.py`).
 
+### 16. The `state.db` migration registry was empty and untested — SPEC 14
+
+**Gap.** `StateStore` checked `schema_version` and refused a newer file, but `_MIGRATIONS`
+was empty, so the upgrade path for an *older* file had never been exercised. The first real
+schema change would have shipped without a test that it upgrades in place or preserves rows.
+
+**Fix.** The registry now has a real entry — v2 adds `idx_jobs_created`, the index behind
+`qc job list` — and `_migrate` applies entries from an injectable registry (default: the
+real one) in ascending order, updating `schema_version` after each. Fresh files are created
+at the current version. Entries are written idempotently so a crash between script and
+version bump replays safely.
+
+**Tests.** `tests/unit/test_state_migrations.py` (5): a hand-built v1 database with a job
+and a profile row is upgraded in place with both rows intact and the new index present;
+three reopenings apply the migration exactly once; a fresh file starts at the current
+version; a newer file is still refused; injected migrations run in version order.
+
 ## Deliberately out of scope (documented, not defects)
 
 | Area | Spec | Status |

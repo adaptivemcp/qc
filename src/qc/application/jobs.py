@@ -45,19 +45,34 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_profiles_dataset ON profiles(dataset);
+-- v2: `job list` orders by created_at; without this it scans and sorts every run.
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
 """
 
-_MIGRATIONS: dict[int, str] = {}
+#: Forward migrations, keyed by the version they bring the file *to*. Each entry runs in
+#: order for a file older than the current version, and is idempotent by convention
+#: (`IF NOT EXISTS`) so a crash between the script and the version update is recoverable.
+_MIGRATIONS: dict[int, str] = {
+    2: "CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);",
+}
 
 #: The `state.db` shape this build creates. A file written by a newer QC is refused
 #: rather than opened with an older table set (SPEC 14).
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 
 
 class StateStore:
     """SQLite-backed job/profile index with 0600 file permissions."""
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        migrations: dict[int, str] | None = None,
+    ) -> None:
+        # Injectable so the upgrade path can be tested without inventing a release; the
+        # default is the real registry above.
+        self.migrations = dict(_MIGRATIONS if migrations is None else migrations)
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
@@ -78,7 +93,9 @@ class StateStore:
             self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
             )
-            self._conn.execute("INSERT INTO schema_version (version) VALUES (1)")
+            self._conn.execute(
+                "INSERT INTO schema_version (version) VALUES (?)", (STATE_SCHEMA_VERSION,)
+            )
             return
         row = self._conn.execute("SELECT version FROM schema_version").fetchone()
         version = int(row["version"]) if row else 1
@@ -89,9 +106,9 @@ class StateStore:
                 f"state database schema_version {version} is newer than supported "
                 f"{STATE_SCHEMA_VERSION}; upgrade QC to use this state directory"
             )
-        for target in sorted(_MIGRATIONS):
+        for target in sorted(self.migrations):
             if target > version:
-                self._conn.executescript(_MIGRATIONS[target])
+                self._conn.executescript(self.migrations[target])
                 self._conn.execute("UPDATE schema_version SET version = ?", (target,))
                 version = target
 
