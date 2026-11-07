@@ -33,6 +33,9 @@ def test_stdio_advertises_tools_and_the_resource_it_serves(tmp_path: Path) -> No
     assert capabilities.logging is None
     assert capabilities.completions is None
     assert capabilities.experimental is None
+    # SEP-2133: the extension this server publishes is declared in `initialize`, so a
+    # client can learn about the resource without probing.
+    assert getattr(capabilities, "extensions", None) == {"dev.adaptivemcp/tools-metadata": {}}
 
 
 def test_the_resource_capability_matches_what_is_actually_listed(tmp_path: Path) -> None:
@@ -62,6 +65,9 @@ def test_no_resource_means_no_resource_capability(tmp_path: Path) -> None:
     assert capabilities.prompts is None
     assert capabilities.logging is None
     assert capabilities.completions is None
+    # No resource means nothing to advertise: claiming the extension would be a promise
+    # `resources/list` cannot keep.
+    assert getattr(capabilities, "extensions", None) is None
 
 
 def test_tool_set_is_unchanged_by_the_trim(tmp_path: Path) -> None:

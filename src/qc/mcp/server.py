@@ -14,7 +14,7 @@ from mcp.server.fastmcp import FastMCP
 
 from qc.application.runtime import Runtime
 from qc.domain.errors import AuthError, InvalidArgumentsError
-from qc.mcp.metadata import register_tools_metadata
+from qc.mcp.metadata import TOOLS_METADATA_EXTENSION, register_tools_metadata
 from qc.mcp.schemas import TOOL_SPECS
 from qc.mcp.service import QCService, build_dispatch, call_tool
 from qc.observability.logging import get_logger, setup_logging
@@ -181,6 +181,11 @@ def advertise_only_implemented(server: Any, *, resources: bool) -> None:
     exactly one resource (`dev.adaptivemcp://tools-metadata`), and the caller that
     registered it says so. A test compares this flag with what `resources/list` really
     returns.
+
+    The same flag gates the **extension advertisement**: SEP-2133 says a server should
+    declare `dev.adaptivemcp/tools-metadata` in `capabilities.extensions`, so a client can
+    learn about the resource from `initialize` instead of probing. It is advertised only
+    while the resource actually exists.
     """
     from mcp.types import ServerCapabilities
 
@@ -191,10 +196,15 @@ def advertise_only_implemented(server: Any, *, resources: bool) -> None:
         notification_options=None, experimental_capabilities=None
     ):
         options = original(notification_options, experimental_capabilities)
-        options.capabilities = ServerCapabilities(
+        capabilities = ServerCapabilities(
             tools=options.capabilities.tools,
             resources=options.capabilities.resources if resources else None,
         )
+        if resources:
+            # SEP-2133's extension identifier. `ServerCapabilities` carries it as an extra
+            # field (the schema is open), so it is set rather than passed to the constructor.
+            capabilities.extensions = {TOOLS_METADATA_EXTENSION: {}}  # type: ignore[attr-defined]
+        options.capabilities = capabilities
         return options
 
     inner.create_initialization_options = create_initialization_options

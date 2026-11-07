@@ -339,6 +339,6 @@ version; a newer file is still refused; injected migrations run in version order
 | Source mutation / DDL | 1.2 | never exposed; read-only by construction |
 | Arbitrary SQL/Python, policy mutation over MCP | 12.3 | excluded by design; stable error |
 | MCP resources / prompt templates | 12.5 | `dev.adaptivemcp://tools-metadata` is published; `qc://` resources and prompt templates declined 2026-10-15 (each duplicates a tool and adds a second surface to authorize) — revisit on concrete client demand |
-| `capabilities.experimental` advertisement of the extension | 12.5, SEP-2133 | the resource is discoverable via `resources/list`; FastMCP does not expose `experimental_capabilities` yet |
+| ~~`capabilities.experimental` advertisement of the extension~~ | 12.5, SEP-2133 | **Done 2026-11-07.** The earlier note said FastMCP could not expose it; that was wrong — the wire schema carries `extensions`, and `advertise_only_implemented()` now declares `dev.adaptivemcp/tools-metadata` in `initialize`, gated on the resource actually being registered. `tests/unit/test_mcp_capabilities.py` asserts both directions (advertised when served, absent when not). |
 | Live MaxCompute driver/dialect verification | 6.4, ADR-006 | protocol tested; live confirmation is a release gate |
 | Project rename / public package name | 19.1 | resolved 2026-10-16: product **QueryCleaner**, distribution **`querycleaner`**, import/CLI **`qc`**; license Apache-2.0 (ADR-001) |
