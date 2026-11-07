@@ -449,3 +449,68 @@ class TestNameLayerContradiction:
         )
 
         assert "credential" in [finding.label.value for finding in findings]
+
+
+class TestRealisticFormatFixture:
+    """Realistic adversarial columns from the hardened fixture (qc#37, 33 columns).
+
+    The first fixture used tidy values; this one uses the shapes that actually appear in
+    tables — git SHAs, request ids, masked addresses, E.164 numbers, JWTs, base32 secrets,
+    and free text with contact details in it.
+    """
+
+    def test_a_git_sha_is_not_a_credential(self) -> None:
+        import hashlib
+
+        from qc.security.sensitivity import detect_sensitivity
+
+        shas = [hashlib.sha1(f"commit-{i}".encode()).hexdigest() for i in range(12)]
+        findings = detect_sensitivity("commit_sha", shas)
+
+        assert findings == []
+
+    def test_a_hex_secret_is_still_a_credential_when_the_name_says_so(self) -> None:
+        import hashlib
+
+        from qc.security.sensitivity import detect_sensitivity
+
+        # Same shape as the SHA above; only the name distinguishes a digest from a key.
+        values = [hashlib.sha256(f"secret-{i}".encode()).hexdigest() for i in range(8)]
+        findings = detect_sensitivity("secret", values)
+
+        assert [finding.label.value for finding in findings] == ["credential"]
+
+    def test_e164_and_spaced_numbers_are_phones(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        e164 = detect_sensitivity("contact_number", [f"+1415555{i:04d}" for i in range(8)])
+        spaced = detect_sensitivity("phone", ["+44 20 7946 0958"] * 6)
+
+        assert [f.label.value for f in e164] == ["phone"]
+        assert [f.label.value for f in spaced] == ["phone"]
+
+    def test_a_jwt_and_a_base32_secret_are_credentials(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        jwt = detect_sensitivity(
+            "session_token",
+            ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N_Xg"] * 6,
+        )
+        base32 = detect_sensitivity("webhook_secret", ["MZXW6YTBOI2DGEZDGNBVGY3TQOJQGEZD"] * 6)
+
+        assert [f.label.value for f in jwt] == ["credential"]
+        assert "credential" in [f.label.value for f in base32]
+
+    def test_free_text_is_flagged_but_embedded_contact_details_are_not_extracted(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        text = [
+            "Customer called about order 4471 and left an email address, reachable at "
+            "alice@example.com; would like a callback on +1 415 555 0100 after 5pm."
+        ] * 6
+        findings = detect_sensitivity("notes_free_text", text)
+
+        # The column is flagged as free text (the disclosure risk), but the address and
+        # number inside it are not surfaced as their own labels. That is a known gap, not
+        # an accident: this test changes when extraction lands.
+        assert [finding.label.value for finding in findings] == ["free_text"]

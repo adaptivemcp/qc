@@ -40,16 +40,16 @@ def test_scoring_counts_true_positives_once_per_column() -> None:
     bench = _bench()
     scores = {score.label: score for score in bench.evaluate()}
 
-    # `email` appears in three labelled columns (two named, one bland).
+    # `email` appears in four labelled columns: two named, one bland, one masked.
     email = scores["email"]
-    assert email.expected == 3
-    assert email.true_positive == 3
+    assert email.expected == 4
+    assert email.true_positive == 4
     assert email.recall == 1.0
 
-    # The name layer flags `email_verified`, so precision is below 1 — the measurement
-    # exists to keep that visible.
-    assert email.predictions if hasattr(email, "predictions") else True
-    assert email.precision < 1.0 or email.predicted == email.expected
+    # The name layer used to flag `email_verified` (precision 0.75); the contradiction rule
+    # dropped it, so predictions and expectations now agree exactly.
+    assert email.predicted == email.expected
+    assert email.precision == 1.0
 
 
 def test_precision_and_recall_are_bounded() -> None:

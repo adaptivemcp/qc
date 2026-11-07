@@ -216,37 +216,49 @@ three of which carry a sensitive *word* in the name on purpose.
 uv run python tools/bench/sensitivity_bench.py
 ```
 
-Recorded 2026-11-07 (after the name-layer fix below), 23 columns:
+Recorded 2026-11-07, **33 columns** — the original set plus realistic formats and
+near-miss controls:
 
 | label | expected | predicted | TP | precision | recall |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | address | 2 | 2 | 2 | 1.00 | 1.00 |
-| credential | 2 | 2 | 2 | 1.00 | 1.00 |
+| credential | 4 | 4 | 4 | 1.00 | 1.00 |
 | date_of_birth | 1 | 1 | 1 | 1.00 | 1.00 |
-| email | 3 | 3 | 3 | 1.00 | 1.00 |
+| email | 4 | 4 | 4 | 1.00 | 1.00 |
 | financial | 1 | 1 | 1 | 1.00 | 1.00 |
+| free_text | 1 | 1 | 1 | 1.00 | 1.00 |
 | government_id | 1 | 1 | 1 | 1.00 | 1.00 |
 | health | 1 | 1 | 1 | 1.00 | 1.00 |
 | ip_address | 1 | 1 | 1 | 1.00 | 1.00 |
 | name | 1 | 1 | 1 | 1.00 | 1.00 |
-| phone | 1 | 1 | 1 | 1.00 | 1.00 |
+| phone | 3 | 3 | 3 | 1.00 | 1.00 |
 
-What the numbers say:
+What the fixture covers, and what the numbers mean:
 
-- **The first run (2026-11-06) exposed two defects, both fixed.** Name-layer precision was
-  0.67 for `credential`, 0.75 for `email` and 0.50 for `phone`, because a sensitive word in
-  a column name was treated as proof: `email_verified` (a boolean), `token_count` (a count)
-  and `phone_model` (product names) were all flagged. A name-derived label is now dropped
-  when the observed values contradict it — booleans for email/phone/credential, a column
-  that is entirely numeric for email/credential, and a "phone" column where fewer than a
-  fifth of values carry seven digits. Masked addresses (`u***@example.com`) and
-  digit-only phone numbers still survive, and both have regression tests.
-- The other defect the fixture caught earlier: `123-45-6789` also matched the loose phone
-  pattern, so an SSN column was reported as `government_id` **and** `phone`. Government-ID
-  and date shapes are now excluded from the phone detector.
-- **Recall is 1.00 on this fixture**; treat that as "the detectors find what they are
-  designed to find", not a real-world rate. The fixture is curated to be separable, and it
-  is a regression baseline and a place to add the next hard case.
+- **Realistic sensitive shapes**: masked addresses (`u***@example.com`, which the format
+  detector misses, so the name layer carries them), E.164 (`+14155550123`), spaced
+  international numbers (`+44 20 7946 0958`), JWTs, base32 webhook secrets, and free text
+  with a contact address inside it.
+- **Near-miss controls**: SKUs, a realistic 40-hex **git SHA**, UUID-shaped request ids and
+  ISO timestamps. These exist to catch the opposite error — a detector that flags anything
+  structured.
+- **Three defects the fixture has now caught, all fixed:**
+  1. `123-45-6789` matched the loose phone pattern → SSN columns reported as *both*
+     `government_id` and `phone`;
+  2. a sensitive word was treated as proof → `email_verified` (boolean), `token_count`
+     (count) and `phone_model` (product names) were flagged (precision 0.75/0.67/0.50);
+  3. a **git SHA** was flagged as a credential by the hex/entropy layer. Digest-shaped
+     values (32/40/64/128 hex) now only count when the column name already claims a
+     credential, so `secret` full of SHA-256 digests is still caught while `commit_sha` is
+     not.
+- **Known gap, measured rather than hidden**: free text is flagged as `free_text` (the
+  disclosure risk) but the address and phone number *inside* it are not surfaced as
+  `email`/`phone`. A test asserts exactly that today, so the test changes when extraction
+  lands.
+- **Recall is 1.00 on this fixture.** Treat it as "the detectors find what they are
+  designed to find", not a real-world rate: the columns are curated to be separable, and
+  the value is in the regression baseline and the defects it produces, not in the perfect
+  score.
 
 ## Inspecting a profile
 
