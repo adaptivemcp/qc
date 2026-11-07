@@ -89,6 +89,12 @@ _SSN_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$")
 _NOT_PHONE_RE = re.compile(r"^\d{3}-\d{2}-\d{4}$|^\d{4}[-/]\d{1,2}[-/]\d{1,2}$")
 # Date shapes that the loose phone regex would otherwise match
 _DATE_SHAPE_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$")
+# Embedded identifiers: found *inside* free text, not as the whole value. A notes column
+# holding "call +1 415 555 0100 or email alice@example.com" is a disclosure risk that the
+# free_text label alone does not describe (qc#37 follow-up).
+_EMBEDDED_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}")
+_EMBEDDED_PHONE_RE = re.compile(r"\+?\d[\d\s().-]{5,20}\d")
+
 # Card-like: 13-19 digits (with or without separators) — Luhn checked
 _CARD_RE = re.compile(r"^\d{13,19}$|^\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{4}$")
 
@@ -283,7 +289,46 @@ def detect_sensitivity(
             ColumnAction.REDACT,
         )
 
+        # ...and the identifiers inside them are what makes that risk concrete. Only for
+        # free text: a structured column's values are already classified whole.
+        embedded_emails = sum(1 for v in observed if _EMBEDDED_EMAIL_RE.search(v))
+        if embedded_emails:
+            add(
+                SensitivityLabel.EMAIL,
+                Confidence.MEDIUM,
+                "embedded:email_in_text",
+                "embedded_detector",
+                ColumnAction.MANUAL_REVIEW,
+            )
+        embedded_phones = sum(1 for v in observed if _embedded_phone(v))
+        if embedded_phones:
+            add(
+                SensitivityLabel.PHONE,
+                Confidence.MEDIUM,
+                "embedded:phone_in_text",
+                "embedded_detector",
+                ColumnAction.MANUAL_REVIEW,
+            )
+
     return list(findings.values())
+
+
+def _embedded_phone(value: str) -> bool:
+    """Whether free text contains something phone-shaped.
+
+    Requires a separator or a country code: a bare eight-digit run inside prose is an
+    order number far more often than a phone, and guessing would trade a real miss for a
+    noisy false positive.
+    """
+    for match in _EMBEDDED_PHONE_RE.finditer(value):
+        text = match.group(0)
+        # Dates and times are the shape's worst neighbours: `2025-05-01` has eight digits
+        # and a separator, and a schedule note was measured as a phone column because of it.
+        if ":" in text or re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            continue
+        if sum(c.isdigit() for c in text) >= 8 and re.search(r"[+\s().-]", text):
+            return True
+    return False
 
 
 _BOOLEANISH = frozenset({"true", "false", "yes", "no", "y", "n", "t", "f", "0", "1"})

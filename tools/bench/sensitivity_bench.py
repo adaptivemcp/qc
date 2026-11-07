@@ -86,10 +86,17 @@ CASES: list[Case] = [
     Case("phone_model", ["iPhone 12", "Pixel 7", "Galaxy S23"] * 4, frozenset()),
     Case("token_count", ["12", "7", "0"] * 4, frozenset()),
     Case("email_verified", ["true", "false"] * 6, frozenset()),
-
     # --- realistic formats the first fixture did not cover
-    Case("masked_email", ["u***@example.com", "j***@corp.io"] * 6, frozenset({SensitivityLabel.EMAIL})),
-    Case("contact_number", [f"+1415555{i:04d}" for i in range(12)], frozenset({SensitivityLabel.PHONE})),
+    Case(
+        "masked_email",
+        ["u***@example.com", "j***@corp.io"] * 6,
+        frozenset({SensitivityLabel.EMAIL}),
+    ),
+    Case(
+        "contact_number",
+        [f"+1415555{i:04d}" for i in range(12)],
+        frozenset({SensitivityLabel.PHONE}),
+    ),
     Case(
         "spaced_phone",
         ["+44 20 7946 0958", "+61 2 9876 5432", "+49 30 123456"] * 4,
@@ -97,7 +104,10 @@ CASES: list[Case] = [
     ),
     Case(
         "session_token",
-        ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"] * 6,
+        [
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        ]
+        * 6,
         frozenset({SensitivityLabel.CREDENTIAL}),
     ),
     Case(
@@ -112,18 +122,41 @@ CASES: list[Case] = [
             "alice@example.com; would like a callback on +1 415 555 0100 after 5pm."
         ]
         * 6,
-        frozenset({SensitivityLabel.FREE_TEXT}),
+        frozenset({SensitivityLabel.FREE_TEXT, SensitivityLabel.EMAIL, SensitivityLabel.PHONE}),
     ),
-
     # --- near-miss controls: structured, but not personal data
     Case("sku", [f"SKU-A{i:03d}B{i:02d}" for i in range(12)], frozenset()),
-    Case("commit_sha", [hashlib.sha1(f"commit-{i}".encode()).hexdigest() for i in range(12)], frozenset()),
+    Case(
+        "commit_sha",
+        [hashlib.sha1(f"commit-{i}".encode()).hexdigest() for i in range(12)],
+        frozenset(),
+    ),
     Case(
         "request_id",
         [f"req-{i:08x}-{i * 7:04x}-4a1b-9c2d-{i:012x}" for i in range(12)],
         frozenset(),
     ),
     Case("recorded_at", [f"2025-05-{i + 1:02d}T12:00:00Z" for i in range(12)], frozenset()),
+    # --- free text that looks busy but carries nothing personal: the noise guard for
+    # embedded extraction. Long prose, digits that are not phone numbers.
+    Case(
+        "notes_order_only",
+        [
+            "Warehouse note: order 12345678 was repacked twice, the pallet label was damaged "
+            "in transit, and the customer asked for the delivery window to be confirmed."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT}),
+    ),
+    Case(
+        "notes_schedule",
+        [
+            "Maintenance window moved: the batch job now starts at 2025-05-01T12:00:00Z "
+            "instead of 03:00 UTC, because the upstream export finishes later than expected."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT}),
+    ),
 ]
 
 

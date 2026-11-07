@@ -501,16 +501,45 @@ class TestRealisticFormatFixture:
         assert [f.label.value for f in jwt] == ["credential"]
         assert "credential" in [f.label.value for f in base32]
 
-    def test_free_text_is_flagged_but_embedded_contact_details_are_not_extracted(self) -> None:
+    def test_free_text_surfaces_the_contact_details_inside_it(self) -> None:
         from qc.security.sensitivity import detect_sensitivity
 
         text = [
             "Customer called about order 4471 and left an email address, reachable at "
             "alice@example.com; would like a callback on +1 415 555 0100 after 5pm."
         ] * 6
-        findings = detect_sensitivity("notes_free_text", text)
+        findings = {
+            finding.label.value: finding for finding in detect_sensitivity("notes_free_text", text)
+        }
 
-        # The column is flagged as free text (the disclosure risk), but the address and
-        # number inside it are not surfaced as their own labels. That is a known gap, not
-        # an accident: this test changes when extraction lands.
+        # The column is free text, and the identifiers inside it are what makes that a
+        # disclosure risk — each is reported with its own evidence marker.
+        assert set(findings) == {"free_text", "email", "phone"}
+        assert findings["email"].evidence == "embedded:email_in_text"
+        assert findings["phone"].evidence == "embedded:phone_in_text"
+        assert findings["email"].detector == "embedded_detector"
+
+    def test_a_bare_digit_run_in_prose_is_not_an_embedded_phone(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        text = [
+            "Warehouse note: order 12345678 was repacked twice, the pallet label was damaged "
+            "in transit, and the customer asked for the delivery window to be confirmed."
+        ] * 6
+        findings = detect_sensitivity("notes_order_only", text)
+
+        # Eight digits with no separator: an order number, not a phone.
+        assert [finding.label.value for finding in findings] == ["free_text"]
+
+    def test_a_schedule_in_prose_is_not_an_embedded_phone(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        text = [
+            "Maintenance window moved: the batch job now starts at 2025-05-01T12:00:00Z "
+            "instead of 03:00 UTC, because the upstream export finishes later than expected."
+        ] * 6
+        findings = detect_sensitivity("notes_schedule", text)
+
+        # A date and a time are eight digits with separators; the first version of the
+        # extraction called this a phone column.
         assert [finding.label.value for finding in findings] == ["free_text"]

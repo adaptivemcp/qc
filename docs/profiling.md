@@ -216,7 +216,7 @@ three of which carry a sensitive *word* in the name on purpose.
 uv run python tools/bench/sensitivity_bench.py
 ```
 
-Recorded 2026-11-07, **33 columns** — the original set plus realistic formats and
+Recorded 2026-11-07, **35 columns** — realistic formats, embedded identifiers and
 near-miss controls:
 
 | label | expected | predicted | TP | precision | recall |
@@ -224,37 +224,41 @@ near-miss controls:
 | address | 2 | 2 | 2 | 1.00 | 1.00 |
 | credential | 4 | 4 | 4 | 1.00 | 1.00 |
 | date_of_birth | 1 | 1 | 1 | 1.00 | 1.00 |
-| email | 4 | 4 | 4 | 1.00 | 1.00 |
+| email | 5 | 5 | 5 | 1.00 | 1.00 |
 | financial | 1 | 1 | 1 | 1.00 | 1.00 |
-| free_text | 1 | 1 | 1 | 1.00 | 1.00 |
+| free_text | 3 | 3 | 3 | 1.00 | 1.00 |
 | government_id | 1 | 1 | 1 | 1.00 | 1.00 |
 | health | 1 | 1 | 1 | 1.00 | 1.00 |
 | ip_address | 1 | 1 | 1 | 1.00 | 1.00 |
 | name | 1 | 1 | 1 | 1.00 | 1.00 |
-| phone | 3 | 3 | 3 | 1.00 | 1.00 |
+| phone | 4 | 4 | 4 | 1.00 | 1.00 |
 
 What the fixture covers, and what the numbers mean:
 
 - **Realistic sensitive shapes**: masked addresses (`u***@example.com`, which the format
   detector misses, so the name layer carries them), E.164 (`+14155550123`), spaced
   international numbers (`+44 20 7946 0958`), JWTs, base32 webhook secrets, and free text
-  with a contact address inside it.
+  with a contact address and phone inside it.
+- **Embedded identifiers are extracted**, not just labelled: a free-text column now reports
+  `free_text` *and* `email` / `phone` with `evidence: embedded:email_in_text` /
+  `embedded:phone_in_text`, because those are what make the disclosure risk concrete.
+- **Noise guards for that extraction**, measured by two controls: eight bare digits in prose
+  (`order 12345678`) are an order number, not a phone, and a schedule
+  (`2025-05-01T12:00:00Z`, `03:00 UTC`) is not a phone either — the first version of the
+  extraction did flag the schedule, which is why date/time shapes are excluded and a
+  separator/country code is required.
 - **Near-miss controls**: SKUs, a realistic 40-hex **git SHA**, UUID-shaped request ids and
-  ISO timestamps. These exist to catch the opposite error — a detector that flags anything
-  structured.
-- **Three defects the fixture has now caught, all fixed:**
+  ISO timestamps — the opposite error, a detector that flags anything structured.
+- **Four defects the fixture has now caught, all fixed:**
   1. `123-45-6789` matched the loose phone pattern → SSN columns reported as *both*
      `government_id` and `phone`;
   2. a sensitive word was treated as proof → `email_verified` (boolean), `token_count`
      (count) and `phone_model` (product names) were flagged (precision 0.75/0.67/0.50);
-  3. a **git SHA** was flagged as a credential by the hex/entropy layer. Digest-shaped
-     values (32/40/64/128 hex) now only count when the column name already claims a
-     credential, so `secret` full of SHA-256 digests is still caught while `commit_sha` is
-     not.
-- **Known gap, measured rather than hidden**: free text is flagged as `free_text` (the
-  disclosure risk) but the address and phone number *inside* it are not surfaced as
-  `email`/`phone`. A test asserts exactly that today, so the test changes when extraction
-  lands.
+  3. a **git SHA** was flagged as a credential by the hex/entropy layer;
+  4. the first embedded extraction read a **maintenance schedule** as a phone column.
+- **Known limitation, measured**: an embedded phone with no separator or country code
+  (`4155550100` inside prose) is not extracted. That is the deliberate trade behind the
+  noise guard, and it is the next thing to measure rather than assume.
 - **Recall is 1.00 on this fixture.** Treat it as "the detectors find what they are
   designed to find", not a real-world rate: the columns are curated to be separable, and
   the value is in the regression baseline and the defects it produces, not in the perfect
