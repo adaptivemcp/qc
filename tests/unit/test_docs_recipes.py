@@ -8,6 +8,8 @@ enough and run fast in the normal suite:
 
 * every relative link in the docs resolves (nothing points at a file that
   nothing generates — e.g. the removed ``workbench/README-demo.md``);
+* every backticked in-repo path in the prose exists (a renamed file, or a
+  planned path written as if it were real);
 * a recipe that adds a source *and* then uses it grants first.
 """
 
@@ -93,6 +95,44 @@ def test_the_grant_check_flags_a_missing_grant() -> None:
 
     # A standalone snippet that only uses a source is not a recipe — not our business.
     assert not grant_violations("qc profile run analytics public.orders --max-queries 40\n")
+
+
+# Inline code that looks like a path in this repo. The roots are the ones a reader could
+# follow; `tools/list` and `tools/call` are MCP method names that merely share a root.
+_INLINE_PATH = re.compile(r"`((?:src|tests|tools|docs|scripts)/[\w./-]+)`")
+_NON_PATHS = frozenset({"tools/list"})
+
+
+def inline_path_citations(text: str) -> list[str]:
+    """In-repo paths cited in inline code, with trailing punctuation trimmed."""
+    return [
+        raw.rstrip("/").rstrip(".,;:")
+        for raw in _INLINE_PATH.findall(text)
+        if raw.rstrip("/") not in _NON_PATHS
+    ]
+
+
+def test_inline_path_citations_exist() -> None:
+    # Prose citations decay silently: a renamed module, or a path in a plan written as if it
+    # already existed. The link check cannot see either, because neither is a link.
+    missing: list[str] = []
+    for doc in DOCS:
+        for cited in inline_path_citations(doc.read_text()):
+            if not (REPO / cited).exists():
+                missing.append(f"{doc.relative_to(REPO)} cites `{cited}`")
+    assert not missing, "documentation cites paths that do not exist:\n" + "\n".join(missing)
+
+
+def test_the_non_path_allowlist_is_not_stale() -> None:
+    # An exemption that no longer matches anything is how an allowlist rots: either the prose
+    # changed and the entry is dead, or the method name moved and the check should see it.
+    used = {
+        raw.rstrip("/")
+        for doc in DOCS
+        for raw in _INLINE_PATH.findall(doc.read_text())
+        if raw.rstrip("/") in _NON_PATHS
+    }
+    assert used == _NON_PATHS, f"stale: {sorted(_NON_PATHS - used)}"
 
 
 def test_relative_links_resolve() -> None:
