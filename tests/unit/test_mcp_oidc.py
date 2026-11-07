@@ -128,6 +128,27 @@ def test_a_token_from_another_issuer_is_refused() -> None:
     assert _verify(verifier, wrong) is None
 
 
+def test_the_client_identity_falls_back_to_azp_when_sub_is_absent() -> None:
+    # Keycloak's light access token carries `azp` and no `sub`; falling back to a constant
+    # would attribute every token to the same client.
+    private, jwk = _rsa_key()
+    verifier = _verifier({"keys": [jwk]})
+    claims = {
+        "iss": ISSUER,
+        "aud": AUDIENCE,
+        "azp": "qc-mcp",
+        "exp": int(time.time()) + 300,
+        "scope": "qc:mcp",
+    }
+    token = jwt.encode(claims, private, algorithm="RS256", headers={"kid": "rsa-1"})
+
+    access = _verify(verifier, token)
+
+    assert access is not None
+    assert access.client_id == "qc-mcp"
+    assert access.subject is None
+
+
 def test_a_token_missing_a_required_scope_is_refused() -> None:
     private, jwk = _rsa_key()
     verifier = _verifier({"keys": [jwk]})
