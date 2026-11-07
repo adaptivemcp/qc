@@ -216,8 +216,8 @@ three of which carry a sensitive *word* in the name on purpose.
 uv run python tools/bench/sensitivity_bench.py
 ```
 
-Recorded 2026-11-07, **35 columns** — realistic formats, embedded identifiers and
-near-miss controls:
+Recorded 2026-11-07, **40 columns** — realistic formats, embedded identifiers (separated
+and unseparated), prose controls and near-miss controls:
 
 | label | expected | predicted | TP | precision | recall |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -226,12 +226,12 @@ near-miss controls:
 | date_of_birth | 1 | 1 | 1 | 1.00 | 1.00 |
 | email | 5 | 5 | 5 | 1.00 | 1.00 |
 | financial | 1 | 1 | 1 | 1.00 | 1.00 |
-| free_text | 3 | 3 | 3 | 1.00 | 1.00 |
+| free_text | 8 | 8 | 8 | 1.00 | 1.00 |
 | government_id | 1 | 1 | 1 | 1.00 | 1.00 |
 | health | 1 | 1 | 1 | 1.00 | 1.00 |
 | ip_address | 1 | 1 | 1 | 1.00 | 1.00 |
 | name | 1 | 1 | 1 | 1.00 | 1.00 |
-| phone | 4 | 4 | 4 | 1.00 | 1.00 |
+| phone | 6 | 6 | 6 | 1.00 | 1.00 |
 
 What the fixture covers, and what the numbers mean:
 
@@ -239,30 +239,32 @@ What the fixture covers, and what the numbers mean:
   detector misses, so the name layer carries them), E.164 (`+14155550123`), spaced
   international numbers (`+44 20 7946 0958`), JWTs, base32 webhook secrets, and free text
   with a contact address and phone inside it.
-- **Embedded identifiers are extracted**, not just labelled: a free-text column now reports
+- **Embedded identifiers are extracted**, not just labelled: a free-text column reports
   `free_text` *and* `email` / `phone` with `evidence: embedded:email_in_text` /
-  `embedded:phone_in_text`, because those are what make the disclosure risk concrete.
-- **Noise guards for that extraction**, measured by two controls: eight bare digits in prose
-  (`order 12345678`) are an order number, not a phone, and a schedule
-  (`2025-05-01T12:00:00Z`, `03:00 UTC`) is not a phone either — the first version of the
-  extraction did flag the schedule, which is why date/time shapes are excluded and a
-  separator/country code is required.
+  `embedded:phone_in_text`.
+- **Unseparated numbers are decided by the sentence, not the shape.** The same eight-digit
+  run is a phone in *"asked us to call 4155550100"*, an order reference in *"order
+  12345678"*, an invoice reference in *"invoice 90123456"*, and a compact date in *"as of
+  20250501"* — four prose columns with identical digit counts, all classified correctly. A
+  sentence carrying both kinds of word (*"call about order 4471 on 4155550100"*) is read as
+  a phone, because that is how a person writes one.
+- **Noise guards, also measured**: a bare eight-digit run with no phone word nearby is not
+  extracted; dates and times (`2025-05-01T12:00:00Z`, `03:00 UTC`) are excluded, which the
+  first version of this code got wrong.
 - **Near-miss controls**: SKUs, a realistic 40-hex **git SHA**, UUID-shaped request ids and
   ISO timestamps — the opposite error, a detector that flags anything structured.
-- **Four defects the fixture has now caught, all fixed:**
+- **Five defects the fixture has caught, all fixed:**
   1. `123-45-6789` matched the loose phone pattern → SSN columns reported as *both*
      `government_id` and `phone`;
-  2. a sensitive word was treated as proof → `email_verified` (boolean), `token_count`
-     (count) and `phone_model` (product names) were flagged (precision 0.75/0.67/0.50);
+  2. a sensitive word was treated as proof → `email_verified`, `token_count` and
+     `phone_model` were flagged (precision 0.75/0.67/0.50);
   3. a **git SHA** was flagged as a credential by the hex/entropy layer;
-  4. the first embedded extraction read a **maintenance schedule** as a phone column.
-- **Known limitation, measured**: an embedded phone with no separator or country code
-  (`4155550100` inside prose) is not extracted. That is the deliberate trade behind the
-  noise guard, and it is the next thing to measure rather than assume.
+  4. the first embedded extraction read a **maintenance schedule** as a phone column;
+  5. the first cut refused **all** unseparated numbers, so a customer's phone written
+     without spaces or dashes was missed.
 - **Recall is 1.00 on this fixture.** Treat it as "the detectors find what they are
   designed to find", not a real-world rate: the columns are curated to be separable, and
-  the value is in the regression baseline and the defects it produces, not in the perfect
-  score.
+  the value is in the regression baseline and the defects it produces, not in the score.
 
 ## Inspecting a profile
 

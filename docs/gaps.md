@@ -266,8 +266,11 @@ third defect: a git SHA was flagged as a credential, so digest-shaped values (32
 hex) now only count when the column name already claims a credential. Then **embedded
 extraction** landed: free text reports `free_text` plus `email`/`phone` with
 `evidence: embedded:*`, guarded against the two shapes that made it noisy (a bare eight-digit
-run in prose, and dates/times such as `2025-05-01T12:00:00Z`). The one measured limitation
-is an embedded phone with no separator or country code, which the guard deliberately misses.
+run in prose, and dates/times such as `2025-05-01T12:00:00Z`). Unseparated numbers are now
+also extracted, but only when the sentence justifies it: a phone word near the digits makes
+them a phone, a reference word without one (`order 12345678`, `invoice 90123456`) does not,
+and a compact date (`20250501`) never does. That is four prose columns with identical digit
+counts, added to the fixture and classified correctly.
 
 Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
 

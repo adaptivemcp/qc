@@ -157,6 +157,53 @@ CASES: list[Case] = [
         * 6,
         frozenset({SensitivityLabel.FREE_TEXT}),
     ),
+    # --- unseparated numbers in prose: the sentence decides, not the digits. Same digit
+    # count, four different meanings.
+    Case(
+        "notes_call_number",
+        [
+            "Customer asked us to call 4155550100 to confirm the delivery window, because the "
+            "pallet label was damaged in transit and the driver needs a new time slot."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT, SensitivityLabel.PHONE}),
+    ),
+    Case(
+        "notes_order_ref",
+        [
+            "Warehouse note: order 12345678 was repacked twice, the pallet label was damaged in "
+            "transit, and the customer asked for the delivery window to be confirmed."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT}),
+    ),
+    Case(
+        "notes_invoice_ref",
+        [
+            "Finance note: invoice 90123456 covers the repack and the replacement labels, and "
+            "the credit note will follow once the audit is signed off by the controller."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT}),
+    ),
+    Case(
+        "notes_compact_date",
+        [
+            "Maintenance note: as of 20250501 the batch job starts later because the upstream "
+            "export finishes after the billing window closes each night in the region."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT}),
+    ),
+    Case(
+        "notes_call_and_order",
+        [
+            "Customer asked us to call about order 4471 on 4155550100 before the window closes, "
+            "because the pallet label was damaged and needs replacing before dispatch."
+        ]
+        * 6,
+        frozenset({SensitivityLabel.FREE_TEXT, SensitivityLabel.PHONE}),
+    ),
 ]
 
 

@@ -543,3 +543,51 @@ class TestRealisticFormatFixture:
         # A date and a time are eight digits with separators; the first version of the
         # extraction called this a phone column.
         assert [finding.label.value for finding in findings] == ["free_text"]
+
+    def test_an_unseparated_number_is_a_phone_only_when_the_sentence_says_so(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        def prose(core: str) -> list[str]:
+            return [core] * 6
+
+        call = prose(
+            "Customer asked us to call 4155550100 to confirm the delivery window, because the "
+            "pallet label was damaged in transit and the driver needs a new time slot."
+        )
+        order = prose(
+            "Warehouse note: order 12345678 was repacked twice, the pallet label was damaged in "
+            "transit, and the customer asked for the delivery window to be confirmed."
+        )
+        invoice = prose(
+            "Finance note: invoice 90123456 covers the repack and the replacement labels, and "
+            "the credit note will follow once the audit is signed off by the controller."
+        )
+        compact_date = prose(
+            "Maintenance note: as of 20250501 the batch job starts later because the upstream "
+            "export finishes after the billing window closes each night in the region."
+        )
+
+        assert "phone" in [f.label.value for f in detect_sensitivity("notes_call_number", call)]
+        # Same digit count, different meaning: a reference word and no phone word.
+        assert [f.label.value for f in detect_sensitivity("notes_order_ref", order)] == [
+            "free_text"
+        ]
+        assert [f.label.value for f in detect_sensitivity("notes_invoice_ref", invoice)] == [
+            "free_text"
+        ]
+        assert [f.label.value for f in detect_sensitivity("notes_compact_date", compact_date)] == [
+            "free_text"
+        ]
+
+    def test_a_phone_word_wins_over_a_reference_word_in_the_same_sentence(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        text = [
+            "Customer asked us to call about order 4471 on 4155550100 before the window closes, "
+            "because the pallet label was damaged and needs replacing before dispatch."
+        ] * 6
+        findings = detect_sensitivity("notes_call_and_order", text)
+
+        # "call about order 4471 on 4155550100" is how a person writes a phone number next to
+        # an order; the closer signal is the phone word, not the noun.
+        assert "phone" in [finding.label.value for finding in findings]
