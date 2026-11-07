@@ -19,7 +19,13 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
-DOCS = [REPO / "README.md", *sorted((REPO / "docs").rglob("*.md"))]
+# SPEC.md is normative but still cites files and shows commands; a stale path there is as
+# misleading as anywhere else.
+DOCS = [
+    REPO / "README.md",
+    REPO / "SPEC.md",
+    *sorted((REPO / "docs").rglob("*.md")),
+]
 
 _FENCE = re.compile(r"^\s*```(\w*)")
 _SHELL_LANGS = {"bash", "sh", "shell", "console"}
