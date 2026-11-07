@@ -74,6 +74,11 @@ _NAME_RULES: list[tuple[str, SensitivityLabel, Confidence]] = [
 # Credential-shaped tokens: long base64/hex with high entropy
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9+/=_-]{24,}$")
 _HEX_RE = re.compile(r"^[0-9a-fA-F]{32,}$")
+# A hash digest is not a secret. Git SHAs (40) and digest sizes 32/64/128 are everywhere in
+# ordinary tables, and treating them as credentials was a measured false positive
+# (tools/bench/sensitivity_bench.py, qc#37). A hex *secret* is still caught when the column
+# name says so, because the name layer adds CREDENTIAL first.
+_DIGEST_RE = re.compile(r"^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{128})$")
 _JWT_RE = re.compile(r"^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$")
 _BEARER_RE = re.compile(r"(?i)^(bearer|basic|token)\s+\S+")
 # Government ID shapes
@@ -237,9 +242,14 @@ def detect_sensitivity(
             ColumnAction.REDACT,
         )
 
-    # Layer 3: entropy / token heuristics for secret-looking strings
+    # Layer 3: entropy / token heuristics for secret-looking strings. A digest-shaped value
+    # only counts when the column name already claims a credential; otherwise `commit_sha`
+    # reads as a leaked token.
+    digest_needs_name = SensitivityLabel.CREDENTIAL not in name_labels
     tokenish = 0
     for v in observed:
+        if digest_needs_name and _DIGEST_RE.match(v):
+            continue
         if (_TOKEN_RE.match(v) or _HEX_RE.match(v)) and _entropy(v) >= 3.5:
             tokenish += 1
     if tokenish / n >= 0.8 and n >= 3:

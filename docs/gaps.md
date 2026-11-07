@@ -259,6 +259,14 @@ defects, both fixed:
   (booleans; all-numeric for email/credential; a "phone" column with fewer than a fifth of
   values carrying seven digits). Masked addresses and digit-only phones still survive.
 
+The fixture was then hardened with the shapes real tables contain — masked addresses,
+E.164 and spaced numbers, JWTs, base32 secrets, free text with contact details, plus
+near-miss controls (SKUs, 40-hex git SHAs, UUID request ids, ISO timestamps). That found a
+third defect: a git SHA was flagged as a credential, so digest-shaped values (32/40/64/128
+hex) now only count when the column name already claims a credential. Measured gap, kept
+visible: free text is flagged as `free_text`, but the address and phone inside it are not
+extracted — a test asserts the current behaviour so it changes deliberately.
+
 Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
 
 **Tests.** `tests/unit/test_sensitivity_bench.py` (controls present, scoring arithmetic,
