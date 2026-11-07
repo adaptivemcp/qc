@@ -277,6 +277,27 @@ Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
 **Tests.** `tests/unit/test_sensitivity_bench.py` (controls present, scoring arithmetic,
 bounded metrics) and `tests/security/test_security.py` for the detector layer itself.
 
+### 14. Profiles did not state how much of a dataset they saw — SPEC 7.4, 7.7
+
+**Gap.** An artifact carried `sample_size` and `row_count` in different places and left the
+reader to divide them, and the only disclosure was a warning string. "Sampled 1,000 rows" is
+not a claim about coverage, and a sample cannot establish that a rare value is absent.
+
+**Fix.** `qc/profiling/representativeness.py` — `summarize_sampling()` produces a
+`Representativeness` block on every artifact: method, sampled rows, total, coverage (or
+`null` when the total is unknown), a confidence rule (high for a full scan, medium at ≥ 20%
+coverage of an exactly-counted table, low otherwise), one statement safe to show a user, and
+the limitations a reader would otherwise assume away. The artifact schema moves to 2; v1
+artifacts migrate with the field absent, because they did not record it.
+
+Deliberately **not** a confidence interval: that needs per-column variance, a chosen level,
+and still cannot answer "does this value exist at all".
+
+**Tests.** `tests/unit/test_representativeness.py` (7: coverage arithmetic, the confidence
+rule, estimated totals, unknown totals, full scan, no sampling, short samples),
+`tests/contract/test_fixture_profiling.py` (artifact carries the block and its statement),
+and `tests/unit/test_artifact_versions.py` (v1 → v2 migration).
+
 ## Deliberately out of scope (documented, not defects)
 
 | Area | Spec | Status |

@@ -69,9 +69,13 @@ def load_profile(path: Path) -> ProfileArtifact:
 
 
 def _migrate(raw: dict[str, object], from_version: int) -> dict[str, object]:
-    """Forward migrations. v1 is current; none registered yet."""
+    """Forward migrations, applied in order for each version below the current one."""
     if from_version < 1:
         raise ValidationError(f"cannot migrate profile from schema_version {from_version}")
+    if from_version < 2:
+        # v2 adds `representativeness`. An older artifact genuinely did not record it, so
+        # the field stays absent rather than being back-filled with a guess.
+        raw = {**raw, "schema_version": SCHEMA_VERSION_PROFILE}
     return raw
 
 

@@ -12,7 +12,7 @@ from qc.config.policies import parse_policy
 from qc.connectors.fixture import FixtureConnector
 from qc.domain.enums import Budget, LogicalType, Measurement
 from qc.domain.errors import BudgetExceededError, NotFoundError, PolicyDeniedError
-from qc.domain.models import DatasetRef, SourceConfig
+from qc.domain.models import SCHEMA_VERSION_PROFILE, DatasetRef, SourceConfig
 from qc.profiling.engine import Profiler, ProfileSettings
 from qc.security.policy import PolicyEngine
 
@@ -67,7 +67,12 @@ class TestProfileRun:
         assert art.row_count_measurement == Measurement.EXACT
         assert len(art.columns) == 11
         assert result.budget_usage.queries > 0
-        assert art.schema_version == 1
+        assert art.schema_version == SCHEMA_VERSION_PROFILE
+        # The artifact states what the sample covers, not just how many rows it saw.
+        assert art.representativeness is not None
+        assert art.representativeness.sampled_rows == 8
+        assert art.representativeness.coverage == 1.0
+        assert "8 of 8 rows" in art.representativeness.statement
         assert art.profile_id.startswith("prof_")
 
     async def test_null_falsy_preserved(self, fixture_root: Path) -> None:

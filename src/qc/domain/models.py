@@ -31,7 +31,7 @@ from qc.domain.enums import (
 from qc.domain.enums import QCBaseModel as _Base
 
 PROFILE_ALGORITHM_VERSION = "1.0.0"
-SCHEMA_VERSION_PROFILE = 1
+SCHEMA_VERSION_PROFILE = 2
 SCHEMA_VERSION_POLICY = 1
 SCHEMA_VERSION_PLAN = 1
 SCHEMA_VERSION_REPORT = 1
@@ -297,6 +297,26 @@ class Relationship(_Base):
 # ------------------------------------------------------------- ProfileArtifact
 
 
+class Representativeness(_Base):
+    """How much of the dataset a profile actually looked at (SPEC 7.4).
+
+    A sample cannot establish the absence of a rare value, so the artifact states what it
+    saw, how much of the table that was, and which method produced it — rather than leaving
+    a reader to infer coverage from two numbers in different places.
+    """
+
+    method: SamplingMethod = SamplingMethod.NONE
+    sampled_rows: int = 0
+    total_rows: int | None = None
+    total_measurement: Measurement = Measurement.UNKNOWN
+    #: sampled / total, clamped to 1.0; `None` when the total is unknown.
+    coverage: float | None = None
+    confidence: Confidence = Confidence.UNKNOWN
+    #: One sentence, safe to show a user or put in a report.
+    statement: str = ""
+    limitations: list[str] = Field(default_factory=list)
+
+
 class ProfileArtifact(_Base):
     """Versioned, shareable profile summary (SPEC 5.6)."""
 
@@ -315,6 +335,7 @@ class ProfileArtifact(_Base):
     observations: list[Observation] = Field(default_factory=list)
     row_count: int | None = None
     row_count_measurement: Measurement = Measurement.UNKNOWN
+    representativeness: Representativeness | None = None
     profile_config: dict[str, Any] = Field(default_factory=dict)
     budget: Budget = Field(default_factory=Budget)
     budget_usage: dict[str, float] = Field(default_factory=dict)

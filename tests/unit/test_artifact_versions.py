@@ -90,6 +90,18 @@ def test_profile_from_the_future_is_refused(tmp_path: Path) -> None:
         load_profile(path)
 
 
+def test_a_v1_profile_migrates_to_the_current_schema(tmp_path: Path) -> None:
+    """v2 added `representativeness`; a v1 file did not record it, so it stays absent."""
+    payload = _profile_payload(1)
+    path = tmp_path / "old.profile.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    artifact = load_profile(path)
+
+    assert artifact.schema_version == SCHEMA_VERSION_PROFILE
+    assert artifact.representativeness is None
+
+
 # ------------------------------------------------------------------- plan loader
 
 
