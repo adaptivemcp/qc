@@ -130,10 +130,14 @@ def _auth_for(token: str, cfg: Any, any_http_url: Any, auth_settings: Any) -> tu
             jwks_uri=oidc.jwks_uri,
             cache_seconds=oidc.cache_seconds,
         )
+        # `resource_server_url` must be an absolute URL, but an OAuth audience is just a
+        # string (`qc-mcp` is a normal one). The verifier already pins `aud` exactly, so the
+        # middleware's extra resource check is only added when the audience *is* a URL.
+        audience_is_url = oidc.audience.startswith(("http://", "https://"))
         auth = auth_settings(
             issuer_url=any_http_url(oidc.issuer_url),
-            resource_server_url=any_http_url(oidc.audience),
-            validate_token_resource=True,
+            resource_server_url=any_http_url(oidc.audience) if audience_is_url else None,
+            validate_token_resource=audience_is_url,
         )
         return verifier, auth
     return (

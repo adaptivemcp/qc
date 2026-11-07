@@ -311,3 +311,34 @@ class TestConfig:
         assert str(auth.resource_server_url).rstrip("/") == AUDIENCE
         # The binding that matters: a token minted for another service is refused.
         assert auth.validate_token_resource is True
+
+
+def test_a_non_url_audience_does_not_break_startup(tmp_path) -> None:
+    # OAuth audiences are strings; API identifiers like `qc-mcp` are the common case. The
+    # verifier pins `aud` exactly, so the middleware's resource check is only usable when the
+    # audience is an absolute URL — it must not be forced into `AnyHttpUrl`.
+    from mcp.server.auth.settings import AuthSettings
+    from pydantic import AnyHttpUrl
+
+    from qc.config.loader import load_config
+    from qc.mcp.oidc import JwtTokenVerifier
+    from qc.mcp.server import _auth_for
+
+    path = tmp_path / "qc.toml"
+    path.write_text(
+        "version = 1\n"
+        "[mcp.http]\n"
+        "enabled = true\n"
+        'mode = "oidc"\n'
+        "[mcp.http.oidc]\n"
+        f'issuer_url = "{ISSUER}"\n'
+        'audience = "qc-mcp"\n',
+        encoding="utf-8",
+    )
+    cfg = load_config(path).mcp_http
+
+    verifier, auth = _auth_for("", cfg, AnyHttpUrl, AuthSettings)
+
+    assert isinstance(verifier, JwtTokenVerifier)
+    assert auth.resource_server_url is None
+    assert auth.validate_token_resource is False
