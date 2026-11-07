@@ -79,25 +79,71 @@ def run_http(runtime: Runtime) -> None:
             "refusing to start HTTP transport with require_auth=false; "
             "remote mode must require authentication (SPEC 12.1)"
         )
-    if not cfg.auth_token_ref:
-        raise AuthError(
-            "mcp.http.auth_token_ref is not set; remote mode needs a token "
-            "(e.g. env:QC_MCP_HTTP_TOKEN)"
-        )
-    # validate the token resolves *before* binding the port
-    from qc.security.secrets import resolve_secret
+    mode = getattr(cfg, "mode", "static")
+    if mode == "oidc":
+        if cfg.oidc is None:  # pragma: no cover - rejected by config validation
+            raise AuthError("mcp.http.mode is oidc but [mcp.http.oidc] is missing")
+        if not cfg.oidc.issuer_url or not cfg.oidc.audience:
+            raise AuthError("[mcp.http.oidc] needs issuer_url and audience")
+        token = ""  # no shared secret in oidc mode; the verifier is the check
+    else:
+        if not cfg.auth_token_ref:
+            raise AuthError(
+                "mcp.http.auth_token_ref is not set; remote mode needs a token "
+                "(e.g. env:QC_MCP_HTTP_TOKEN)"
+            )
+        # validate the token resolves *before* binding the port
+        from qc.security.secrets import resolve_secret
 
-    token = resolve_secret(cfg.auth_token_ref)
-    if len(token) < 16:
-        raise AuthError("HTTP auth token must be at least 16 characters")
+        token = resolve_secret(cfg.auth_token_ref)
+        if len(token) < 16:
+            raise AuthError("HTTP auth token must be at least 16 characters")
 
     setup_logging(level="info", json_output=True)
     server = build_server_http(runtime, token, cfg)
     log.info(
         "mcp http server starting",
-        fields={"detail": f"{cfg.host}:{cfg.port} auth=bearer"},
+        # `auth=` in a log line trips the redactor (it looks like a credential pair), so the
+        # mode goes in its own field.
+        fields={"detail": f"{cfg.host}:{cfg.port}", "verifier": mode},
     )
     server.run(transport="streamable-http")
+
+
+def _auth_for(token: str, cfg: Any, any_http_url: Any, auth_settings: Any) -> tuple[Any, Any]:
+    """Choose the token verifier and auth settings from `[mcp.http]`.
+
+    `static` keeps the v1 shared token; `oidc` validates a JWT against the provider's JWKS
+    and binds it to QC's audience (`validate_token_resource=True`), which is the difference
+    between "some token was presented" and "a token minted for this server was presented".
+    """
+    if getattr(cfg, "mode", "static") == "oidc":
+        from qc.mcp.oidc import JwtTokenVerifier
+
+        oidc = cfg.oidc
+        if oidc is None:  # pragma: no cover - rejected by config validation
+            raise RuntimeError("oidc mode requires [mcp.http.oidc]")
+        verifier = JwtTokenVerifier(
+            issuer=oidc.issuer_url,
+            audience=oidc.audience,
+            required_scopes=oidc.required_scopes,
+            jwks_uri=oidc.jwks_uri,
+            cache_seconds=oidc.cache_seconds,
+        )
+        auth = auth_settings(
+            issuer_url=any_http_url(oidc.issuer_url),
+            resource_server_url=any_http_url(oidc.audience),
+            validate_token_resource=True,
+        )
+        return verifier, auth
+    return (
+        StaticTokenVerifier(token),
+        auth_settings(
+            issuer_url=any_http_url(f"http://{cfg.host}:{cfg.port}"),
+            resource_server_url=None,
+            validate_token_resource=False,
+        ),
+    )
 
 
 def build_server_http(runtime: Runtime, token: str, cfg: Any) -> Any:
@@ -116,15 +162,12 @@ def build_server_http(runtime: Runtime, token: str, cfg: Any) -> Any:
     window = 60.0
     limit = float(cfg.rate_limit_per_minute)
 
+    verifier, auth = _auth_for(token, cfg, AnyHttpUrl, AuthSettings)
     server = FastMCP(
         name="qc",
         instructions=INSTRUCTIONS,
-        token_verifier=StaticTokenVerifier(token),
-        auth=AuthSettings(
-            issuer_url=AnyHttpUrl(f"http://{cfg.host}:{cfg.port}"),
-            resource_server_url=None,
-            validate_token_resource=False,
-        ),
+        token_verifier=verifier,
+        auth=auth,
         host=cfg.host,
         port=cfg.port,
         max_request_body_size=cfg.max_request_bytes,

@@ -527,9 +527,10 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8765/mcp \
        "clientInfo":{"name":"t","version":"0"}}}'
 ```
 
-Keep it bound to `127.0.0.1` unless you intend remote access, and put TLS
-plus an OIDC gateway in front of it — the bearer token is a v1 stopgap
-(ADR-003).
+Keep it bound to `127.0.0.1` unless you intend remote access, and put TLS in front of it.
+Authentication is either the shared bearer token (the v1 stopgap) or, with
+`[mcp.http] mode = "oidc"`, OIDC bearer verification against the provider's JWKS
+(`iss`/`aud`/`exp`/scope), which makes a gateway optional rather than required (ADR-003).
 
 ### What an agent can and cannot reach
 
@@ -601,7 +602,8 @@ denied, `5` budget/cancelled, `6` source error, `7` validation failure,
   scheduled (see docs/synthetic-data.md).
 - MaxCompute requires a pinned JDBC driver + Java 17+; live driver/dialect
   verification is a release gate (ADR-006).
-- HTTP bearer auth is a stopgap in front of an OIDC gateway (ADR-003).
+- HTTP auth is a shared bearer token by default, or OIDC JWT verification (`mode = "oidc"`,
+  JWKS + `iss`/`aud`/scope, ADR-003).
 
 ## Releasing
 

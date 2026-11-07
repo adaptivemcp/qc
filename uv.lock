@@ -1138,10 +1138,12 @@ name = "querycleaner"
 version = "0.2.1"
 source = { editable = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "faker" },
     { name = "httpx" },
     { name = "mcp" },
     { name = "pydantic" },
+    { name = "pyjwt" },
     { name = "pyyaml" },
     { name = "typer" },
     { name = "typing-extensions" },
@@ -1182,6 +1184,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42,<51" },
     { name = "faker", specifier = ">=30,<35" },
     { name = "httpx", specifier = ">=0.27,<1" },
     { name = "keyring", marker = "extra == 'keyring'", specifier = ">=25,<26" },
@@ -1190,6 +1193,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=17,<23" },
     { name = "pydantic", specifier = ">=2.7,<3" },
+    { name = "pyjwt", specifier = ">=2.8,<3" },
     { name = "pyyaml", specifier = ">=6,<7" },
     { name = "querycleaner", extras = ["keyring"], marker = "extra == 'all'" },
     { name = "querycleaner", extras = ["mysql"], marker = "extra == 'all'" },
