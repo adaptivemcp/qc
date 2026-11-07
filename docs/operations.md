@@ -88,6 +88,33 @@ Tests, in two layers:
   `kid` refetches exactly once), and the app boundary through `streamable_http_app()` — a
   valid RS256 token gets `200`, an expired one and a token-less request get `401`.
 
+### Validated against a real identity provider
+
+**Measured 2026-11-07, Keycloak 26.0 (`start-dev`, realm imported), qc 0.2.1.**
+
+- Discovery read `http://127.0.0.1:8080/realms/qc/.well-known/openid-configuration` and the
+  JWKS from `…/protocol/openid-connect/certs`; the verifier cached both (two verifications,
+  one fetch each).
+- A password-grant token (`RS256`, `kid` present) was **accepted**, with `scope: qc:mcp` and
+  `aud: qc-mcp`.
+- The same token was **refused** with a different audience, a different issuer, and a
+  required scope it does not carry.
+- **Interop finding, fixed:** Keycloak's light access token has no `sub` claim, only `azp`.
+  The verifier had fallen back to the constant `oidc-client`, attributing every token to the
+  same client; it now uses `client_id` → `azp` → `sub`, and `qc-mcp` is reported. A unit case
+  pins the shape.
+
+Re-run it with any provider:
+
+```bash
+export QC_OIDC_ISSUER=https://idp.example.com/realms/qc
+export QC_OIDC_AUDIENCE=qc-mcp
+export QC_OIDC_TOKEN=$(curl -s -X POST "$QC_OIDC_ISSUER/protocol/openid-connect/token" \
+  -d grant_type=password -d client_id=qc-mcp -d client_secret=… \
+  -d username=alice -d password=… -d scope=qc:mcp | jq -r .access_token)
+uv run pytest tests/integration/test_oidc_live.py   # skipped unless those are set
+```
+
 Note on revocation: a rotated key stays trusted until the JWKS cache expires, because a
 cached key is not a revoked key. Shorten `cache_seconds` if immediate revocation matters.
 

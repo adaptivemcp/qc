@@ -104,9 +104,13 @@ class JwtTokenVerifier:
             return None
 
         subject = claims.get("sub")
+        # `client_id` is the OAuth client; `azp` is Keycloak's authorized-party claim and is
+        # what a light access token carries when `sub` is omitted. Without `azp` first, every
+        # Keycloak token was attributed to the constant below, losing per-client identity.
+        client_id = claims.get("client_id") or claims.get("azp") or subject or "oidc-client"
         return AccessToken(
             token=token,
-            client_id=str(subject or claims.get("client_id") or "oidc-client"),
+            client_id=str(client_id),
             scopes=scopes,
             expires_at=int(claims["exp"]) if claims.get("exp") else None,
             resource=self.audience,
