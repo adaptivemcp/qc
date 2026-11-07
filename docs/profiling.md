@@ -216,33 +216,37 @@ three of which carry a sensitive *word* in the name on purpose.
 uv run python tools/bench/sensitivity_bench.py
 ```
 
-Recorded 2026-11-06:
+Recorded 2026-11-07 (after the name-layer fix below), 23 columns:
 
 | label | expected | predicted | TP | precision | recall |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | address | 2 | 2 | 2 | 1.00 | 1.00 |
-| credential | 2 | 3 | 2 | 0.67 | 1.00 |
+| credential | 2 | 2 | 2 | 1.00 | 1.00 |
 | date_of_birth | 1 | 1 | 1 | 1.00 | 1.00 |
-| email | 3 | 4 | 3 | 0.75 | 1.00 |
+| email | 3 | 3 | 3 | 1.00 | 1.00 |
 | financial | 1 | 1 | 1 | 1.00 | 1.00 |
 | government_id | 1 | 1 | 1 | 1.00 | 1.00 |
 | health | 1 | 1 | 1 | 1.00 | 1.00 |
 | ip_address | 1 | 1 | 1 | 1.00 | 1.00 |
 | name | 1 | 1 | 1 | 1.00 | 1.00 |
-| phone | 1 | 2 | 1 | 0.50 | 1.00 |
+| phone | 1 | 1 | 1 | 1.00 | 1.00 |
 
 What the numbers say:
 
-- **Recall is 1.00 everywhere on this fixture**; the failures are precision, and all of
-  them are the name layer firing on a control (`email_verified`, `token_count`,
-  `phone_model`). A sensitive word in a column name is evidence, not proof.
-- **The one true bug the fixture caught**: `123-45-6789` also matched the loose phone
-  pattern, so an SSN column was reported as both `government_id` and `phone`. Fixed by
-  excluding government-ID and date shapes from the phone detector — phone precision went
-  0.50 → 1.00.
-- The fixture is curated to be separable; treat 1.00 recall as "the detectors find what
-  they are designed to find", not as an expected real-world rate. It is a regression
-  baseline and a place to add the next hard case.
+- **The first run (2026-11-06) exposed two defects, both fixed.** Name-layer precision was
+  0.67 for `credential`, 0.75 for `email` and 0.50 for `phone`, because a sensitive word in
+  a column name was treated as proof: `email_verified` (a boolean), `token_count` (a count)
+  and `phone_model` (product names) were all flagged. A name-derived label is now dropped
+  when the observed values contradict it — booleans for email/phone/credential, a column
+  that is entirely numeric for email/credential, and a "phone" column where fewer than a
+  fifth of values carry seven digits. Masked addresses (`u***@example.com`) and
+  digit-only phone numbers still survive, and both have regression tests.
+- The other defect the fixture caught earlier: `123-45-6789` also matched the loose phone
+  pattern, so an SSN column was reported as `government_id` **and** `phone`. Government-ID
+  and date shapes are now excluded from the phone detector.
+- **Recall is 1.00 on this fixture**; treat that as "the detectors find what they are
+  designed to find", not a real-world rate. The fixture is curated to be separable, and it
+  is a regression baseline and a place to add the next hard case.
 
 ## Inspecting a profile
 

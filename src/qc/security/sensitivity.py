@@ -137,7 +137,12 @@ def detect_sensitivity(
                 recommended_action=action,
             )
 
-    # Layer 1: name heuristics
+    # Layer 1: name heuristics. A sensitive word in a column name is evidence, not proof —
+    # `email_verified` is a boolean, `token_count` is a count, and `phone_model` names a
+    # product. Those were measured as false positives by tools/bench/sensitivity_bench.py
+    # (qc#37), so name-derived labels are recorded separately and re-checked against the
+    # values before they are returned.
+    name_labels: set[SensitivityLabel] = set()
     lowered = column_name.lower()
     for pattern, label, conf in _NAME_RULES:
         if re.search(pattern, lowered):
@@ -152,6 +157,7 @@ def detect_sensitivity(
                 else ColumnAction.MANUAL_REVIEW
             )
             add(label, conf, "schema_name_pattern", "name_heuristic", action)
+            name_labels.add(label)
 
     # Org-specific name rules
     if config:
@@ -164,6 +170,14 @@ def detect_sensitivity(
         return list(findings.values())
 
     n = len(observed)
+
+    # Drop a name-derived label the values clearly contradict. Only the contradictions we
+    # can state with evidence are used, and only for name-layer findings: a masked email
+    # (`u***@example.com`) or a numeric phone still survives, because neither condition
+    # applies to it.
+    for label in name_labels:
+        if _contradicts(label, observed):
+            findings.pop(label, None)
 
     # Layer 2: format detectors
     email_hits = sum(1 for v in observed if EMAIL_RE.match(v))
@@ -260,6 +274,44 @@ def detect_sensitivity(
         )
 
     return list(findings.values())
+
+
+_BOOLEANISH = frozenset({"true", "false", "yes", "no", "y", "n", "t", "f", "0", "1"})
+_NUMERIC_RE = re.compile(r"^[+-]?\d+(?:[.,]\d+)*$")
+
+
+def _all_booleanish(observed: list[str]) -> bool:
+    return all(value.strip().lower() in _BOOLEANISH for value in observed)
+
+
+def _all_numeric(observed: list[str]) -> bool:
+    return all(_NUMERIC_RE.match(value.strip()) for value in observed)
+
+
+def _phone_share(observed: list[str]) -> float:
+    """Share of values with enough digits to plausibly be a phone number."""
+    hits = sum(1 for value in observed if sum(c.isdigit() for c in value) >= 7)
+    return hits / len(observed)
+
+
+def _contradicts(label: SensitivityLabel, observed: list[str]) -> bool:
+    """Whether observed values make a name-derived label implausible.
+
+    Deliberately narrow: each rule names the *shape* that cannot be the label, rather than
+    guessing what the column is instead.
+    """
+    if _all_booleanish(observed):
+        # A boolean column says `email_verified`, not `email`.
+        return label in (
+            SensitivityLabel.EMAIL,
+            SensitivityLabel.PHONE,
+            SensitivityLabel.CREDENTIAL,
+        )
+    if label in (SensitivityLabel.EMAIL, SensitivityLabel.CREDENTIAL) and _all_numeric(observed):
+        # `token_count` is a count; an email address is never a bare number.
+        return True
+    # `phone_model` holds product names; fewer than a fifth look like numbers at all.
+    return label == SensitivityLabel.PHONE and _phone_share(observed) < 0.2
 
 
 def _rank(c: Confidence) -> int:
