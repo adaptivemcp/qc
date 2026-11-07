@@ -393,3 +393,59 @@ class TestHttpAuth:
         bad = asyncio.run(v.verify_token("b" * 32))
         assert ok is not None
         assert bad is None
+
+
+class TestNameLayerContradiction:
+    """A sensitive word in a column name is evidence, not proof (qc#37 measurement).
+
+    `email_verified`, `token_count` and `phone_model` were flagged by the name layer
+    alone; the measured precision was 0.75/0.67/0.50. The values now contradict the name.
+    """
+
+    def test_boolean_column_named_email_is_not_an_email(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        findings = detect_sensitivity("email_verified", ["true", "false"] * 6)
+
+        assert findings == []
+
+    def test_count_column_named_token_is_not_a_credential(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        findings = detect_sensitivity("token_count", ["12", "7", "0"] * 4)
+
+        assert findings == []
+
+    def test_product_names_in_a_phone_column_are_not_phones(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        findings = detect_sensitivity("phone_model", ["iPhone 12", "Pixel 7"] * 6)
+
+        assert findings == []
+
+    def test_masked_addresses_still_count_as_email(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        # `u***@example.com` does not match the email format detector, so the name layer is
+        # all that stands between this column and no finding at all. It must survive.
+        findings = detect_sensitivity("email", ["u***@example.com"] * 6)
+
+        assert [finding.label.value for finding in findings] == ["email"]
+
+    def test_numeric_phone_numbers_survive(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        # A phone column with plain digits is exactly the shape the contradiction rule must
+        # not reject: seven or more digits is phone-like.
+        findings = detect_sensitivity("phone", ["5551234567"] * 6)
+
+        assert [finding.label.value for finding in findings] == ["phone"]
+
+    def test_real_tokens_survive_the_count_rule(self) -> None:
+        from qc.security.sensitivity import detect_sensitivity
+
+        findings = detect_sensitivity(
+            "api_key", [f"sk_live_{i:02d}abcdefghijklmnopqrstwx" for i in range(8)]
+        )
+
+        assert "credential" in [finding.label.value for finding in findings]

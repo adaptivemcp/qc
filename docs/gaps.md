@@ -247,10 +247,19 @@ shape unchanged, zero-padded values still non-postal without the hint.
 "regex based" was the whole story.
 
 **Fix.** `tools/bench/sensitivity_bench.py` scores the real detector over 23 labelled
-columns (13 sensitive, 10 controls, three with a sensitive word in the name). It caught a
-real false positive: `123-45-6789` matched the loose phone pattern, so an SSN column was
-reported as `government_id` *and* `phone`. Fixed by excluding government-ID/date shapes
-from the phone detector. Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
+columns (13 sensitive, 10 controls, three with a sensitive word in the name). It caught two
+defects, both fixed:
+
+- `123-45-6789` matched the loose phone pattern, so an SSN column was reported as
+  `government_id` *and* `phone` — government-ID/date shapes are now excluded from the phone
+  detector.
+- the name layer treated a sensitive word as proof: `email_verified` (boolean),
+  `token_count` (count) and `phone_model` (product names) were flagged, giving precision
+  0.75/0.67/0.50. A name-derived label is now dropped when the values contradict it
+  (booleans; all-numeric for email/credential; a "phone" column with fewer than a fifth of
+  values carrying seven digits). Masked addresses and digit-only phones still survive.
+
+Numbers and caveats: `docs/profiling.md#sensitivity-detector-accuracy`.
 
 **Tests.** `tests/unit/test_sensitivity_bench.py` (controls present, scoring arithmetic,
 bounded metrics) and `tests/security/test_security.py` for the detector layer itself.
